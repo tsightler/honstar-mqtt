@@ -302,12 +302,51 @@ Docker:
 
         await setTargetChargeLevel(awsClient, accessToken, vin, value);
 
-        // Update the last known good value
-        lastReportedTargetLevel = value;
+        // Poll dashboard until it reflects the new target level
+        log("Waiting for dashboard to confirm target charge level...");
+        let confirmed = false;
+        for (let attempt = 1; attempt <= 5; attempt++) {
+          const dashboard = await pollOnce(
+            accessToken,
+            hidasIdent,
+            vin,
+            awsClient
+          );
 
-        // Refresh dashboard using the same connection
-        log("Refreshing dashboard after target charge level change...");
-        await poll(awsClient);
+          if (dashboard) {
+            if (dashboard.chargeSettings?.targetLevel === value) {
+              log(`Dashboard confirmed target charge level: ${value}%`);
+              lastReportedTargetLevel = value;
+              confirmed = true;
+              printDashboard(dashboard);
+              publishData(brokerClient, vin, dashboard);
+              publishStates(brokerClient, vin, dashboard);
+              publishAvailability(brokerClient, vin, true);
+              break;
+            }
+
+            log(
+              `Dashboard shows target level ${dashboard.chargeSettings?.targetLevel}%, expected ${value}% (attempt ${attempt}/5)`
+            );
+          }
+
+          if (attempt < 5) {
+            await new Promise((r) => setTimeout(r, 15000));
+          }
+        }
+
+        if (!confirmed) {
+          log(
+            `Target charge level ${value}% not confirmed by dashboard, reverting`
+          );
+          if (lastReportedTargetLevel != null) {
+            brokerClient.publish(
+              stateTopic,
+              String(lastReportedTargetLevel),
+              opts
+            );
+          }
+        }
       } catch (err) {
         log(`Failed to set target charge level: ${err.message}`);
 
