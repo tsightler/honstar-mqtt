@@ -5,6 +5,6 @@
 # See: https://github.com/just-containers/s6-overlay#customizing-s6-behaviour
 # ==============================================================================
 
-if -t { s6-test $1 -ne 0 }
-if -t { s6-test $1 -ne 256 }
+if -t { /command/s6-test $1 -ne 0 }
+if -t { /command/s6-test $1 -ne 256 }
 /run/s6/basedir/bin/halt
