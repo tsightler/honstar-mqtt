@@ -1,4 +1,4 @@
-#!/usr/bin/execlineb -S1
+#!/command/execlineb -S1
 # ==============================================================================
 # Acura EV MQTT - Service finish script
 # Halt container on critical errors
@@ -7,4 +7,4 @@
 
 if -t { s6-test $1 -ne 0 }
 if -t { s6-test $1 -ne 256 }
-s6-svscanctl -t /var/run/s6/services
+/run/s6/basedir/bin/halt

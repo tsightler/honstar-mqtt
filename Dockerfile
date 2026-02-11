@@ -67,7 +67,7 @@ LABEL \
     io.hass.name="Acura EV MQTT" \
     io.hass.description="Acura EV vehicle data to MQTT bridge" \
     io.hass.type="addon" \
-    io.hass.version="1.0.0" \
+    io.hass.version="1.0.2" \
     org.opencontainers.image.title="Acura EV MQTT" \
     org.opencontainers.image.description="Bridges Acura EV vehicle data to MQTT" \
     org.opencontainers.image.source="https://github.com/tsightler/acura-ev" \
