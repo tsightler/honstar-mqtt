@@ -1,10 +1,10 @@
 const { log, debug } = require("./config");
-const { getCigToken, requestSetTargetChargeLevel } = require("./api");
-const { connectAwsMqtt } = require("./aws-mqtt");
+const { requestSetTargetChargeLevel } = require("./api");
+const { subscribeAwsTopic } = require("./aws-mqtt");
 
 async function setTargetChargeLevel(
+  awsClient,
   accessToken,
-  hidasIdent,
   vin,
   level,
   { maxAttempts = 3, verifyTimeout = 60000 } = {}
@@ -16,87 +16,66 @@ async function setTargetChargeLevel(
 
   log(`Setting target charge level to ${level}%...`);
 
+  // Subscribe to the charge management shadow topic once
+  const chargeTopic = `$aws/things/thing_${vin}/shadow/name/CHARGEMANAGEMENT_TARGETCHARGELEVEL_ASYNC/update`;
+  await subscribeAwsTopic(awsClient, chargeTopic);
+
+  // Retry loop: only retry the HTTP POST + MQTT confirmation
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      // Get a fresh CIG token for this attempt
-      const { cigToken, cigSignature } = await getCigToken(
-        accessToken,
-        hidasIdent,
-        vin
-      );
+      await requestSetTargetChargeLevel(accessToken, vin, level);
 
-      // Connect to AWS IoT MQTT
-      const awsClient = await connectAwsMqtt(vin, cigToken, cigSignature);
+      // Wait for SUCCESS on the MQTT topic
+      const success = await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          awsClient.removeListener("message", handler);
+          reject(
+            new Error(
+              `Timed out waiting for charge level confirmation (${verifyTimeout / 1000}s)`
+            )
+          );
+        }, verifyTimeout);
 
-      try {
-        // Subscribe to the charge management shadow topic
-        const chargeTopic = `$aws/things/thing_${vin}/shadow/name/CHARGEMANAGEMENT_TARGETCHARGELEVEL_ASYNC/update`;
-        await new Promise((resolve, reject) => {
-          awsClient.subscribe(chargeTopic, { qos: 1 }, (err) => {
-            if (err) reject(err);
-            else {
-              debug(`Subscribed to: ${chargeTopic}`);
-              resolve();
-            }
-          });
-        });
+        function handler(topic, message) {
+          if (!topic.includes("CHARGEMANAGEMENT_TARGETCHARGELEVEL_ASYNC"))
+            return;
 
-        // POST the set target charge level request
-        const reqId = await requestSetTargetChargeLevel(
-          accessToken,
-          vin,
-          level
-        );
+          try {
+            const payload = JSON.parse(message.toString());
+            const reported = payload.state?.reported;
+            if (!reported) return;
 
-        // Wait for SUCCESS on the MQTT topic
-        const success = await new Promise((resolve, reject) => {
-          const timeout = setTimeout(() => {
-            reject(
-              new Error(
-                `Timed out waiting for charge level confirmation (${verifyTimeout / 1000}s)`
-              )
+            debug(
+              `Charge level response: ${reported.status} (${reported.cigServiceRequestId})`
             );
-          }, verifyTimeout);
 
-          awsClient.on("message", (topic, message) => {
-            if (!topic.includes("CHARGEMANAGEMENT_TARGETCHARGELEVEL_ASYNC"))
-              return;
-
-            try {
-              const payload = JSON.parse(message.toString());
-              const reported = payload.state?.reported;
-              if (!reported) return;
-
-              debug(
-                `Charge level response: ${reported.status} (${reported.cigServiceRequestId})`
+            if (reported.status === "SUCCESS") {
+              clearTimeout(timeout);
+              awsClient.removeListener("message", handler);
+              resolve(true);
+            } else if (
+              reported.status !== "IN_PROGRESS" &&
+              reported.status !== "PENDING"
+            ) {
+              clearTimeout(timeout);
+              awsClient.removeListener("message", handler);
+              reject(
+                new Error(
+                  `Set target charge failed with status: ${reported.status}`
+                )
               );
-
-              if (reported.status === "SUCCESS") {
-                clearTimeout(timeout);
-                resolve(true);
-              } else if (
-                reported.status !== "IN_PROGRESS" &&
-                reported.status !== "PENDING"
-              ) {
-                clearTimeout(timeout);
-                reject(
-                  new Error(
-                    `Set target charge failed with status: ${reported.status}`
-                  )
-                );
-              }
-            } catch {
-              // ignore parse errors
             }
-          });
-        });
-
-        if (success) {
-          log(`Target charge level set to ${level}% (confirmed by vehicle)`);
-          return true;
+          } catch {
+            // ignore parse errors
+          }
         }
-      } finally {
-        awsClient.end(true);
+
+        awsClient.on("message", handler);
+      });
+
+      if (success) {
+        log(`Target charge level set to ${level}% (confirmed by vehicle)`);
+        return true;
       }
     } catch (err) {
       log(

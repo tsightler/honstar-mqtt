@@ -20,7 +20,7 @@ const {
   getCigToken,
   requestDashboard,
 } = require("./src/api");
-const { connectAwsMqtt } = require("./src/aws-mqtt");
+const { connectAwsMqtt, subscribeAwsTopic } = require("./src/aws-mqtt");
 const { connectBroker, publishData } = require("./src/broker");
 const { parseDashboard, printDashboard } = require("./src/dashboard");
 const {
@@ -32,34 +32,48 @@ const { setTargetChargeLevel } = require("./src/commands");
 
 // ─── Poll Cycle ──────────────────────────────────────────────────────────────
 
-async function pollOnce(accessToken, hidasIdent, vin) {
-  const { cigToken, cigSignature } = await getCigToken(
-    accessToken,
-    hidasIdent,
-    vin
-  );
+async function pollOnce(accessToken, hidasIdent, vin, existingAwsClient) {
+  let awsClient = existingAwsClient;
+  let ownConnection = false;
 
-  const awsClient = await connectAwsMqtt(vin, cigToken, cigSignature);
+  if (!awsClient) {
+    const { cigToken, cigSignature } = await getCigToken(
+      accessToken,
+      hidasIdent,
+      vin
+    );
+    awsClient = await connectAwsMqtt(vin, cigToken, cigSignature);
+    ownConnection = true;
+  }
 
   try {
+    // Subscribe to dashboard topic
+    const dashTopic = `$aws/things/thing_${vin}/shadow/name/DASHBOARD_ASYNC/update`;
+    await subscribeAwsTopic(awsClient, dashTopic);
+
     const cancelSignal = { cancelled: false };
 
     const dashboardPromise = new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         cancelSignal.cancelled = true;
+        awsClient.removeListener("message", handler);
         reject(new Error("Timed out waiting for dashboard data (60s)"));
       }, 60000);
 
-      awsClient.on("message", (topic, message) => {
+      function handler(topic, message) {
+        if (!topic.includes("DASHBOARD_ASYNC")) return;
         debug(`Received MQTT message on: ${topic}`);
         const payload = message.toString();
         const dashboard = parseDashboard(payload);
         if (dashboard) {
           cancelSignal.cancelled = true;
           clearTimeout(timeout);
+          awsClient.removeListener("message", handler);
           resolve(dashboard);
         }
-      });
+      }
+
+      awsClient.on("message", handler);
     });
 
     await requestDashboard(accessToken, vin, { cancelSignal });
@@ -85,7 +99,9 @@ async function pollOnce(accessToken, hidasIdent, vin) {
     clearInterval(retryTimer);
     return dashboard;
   } finally {
-    awsClient.end(true);
+    if (ownConnection) {
+      awsClient.end(true);
+    }
   }
 }
 
@@ -138,7 +154,7 @@ Docker:
   let vehicle = null;
   let pollTimer = null;
   let shuttingDown = false;
-  let commandInProgress = false;
+  let busy = false;
   let lastReportedTargetLevel = null;
 
   // Graceful shutdown
@@ -181,12 +197,12 @@ Docker:
   }
 
   // Single poll + publish cycle
-  async function poll() {
+  async function poll(existingAwsClient) {
     if (shuttingDown) return;
 
     log("Starting poll cycle...");
     try {
-      const dashboard = await pollOnce(accessToken, hidasIdent, vin);
+      const dashboard = await pollOnce(accessToken, hidasIdent, vin, existingAwsClient);
       if (dashboard) {
         printDashboard(dashboard);
         publishData(brokerClient, vin, dashboard);
@@ -261,12 +277,12 @@ Docker:
         return;
       }
 
-      if (commandInProgress) {
-        log("Command already in progress, ignoring set target charge level");
+      if (busy) {
+        log("Operation in progress, ignoring set target charge level");
         return;
       }
 
-      commandInProgress = true;
+      busy = true;
       const stateTopic = `acura-ev/${vin}/ev_target_charge_level/state`;
       const opts = { retain: true, qos: 1 };
 
@@ -274,15 +290,24 @@ Docker:
       brokerClient.publish(stateTopic, String(value), opts);
       log(`Optimistically set target charge level state to ${value}%`);
 
+      // Single AWS MQTT connection for both command and dashboard refresh
+      let awsClient;
       try {
-        await setTargetChargeLevel(accessToken, hidasIdent, vin, value);
+        const { cigToken, cigSignature } = await getCigToken(
+          accessToken,
+          hidasIdent,
+          vin
+        );
+        awsClient = await connectAwsMqtt(vin, cigToken, cigSignature);
+
+        await setTargetChargeLevel(awsClient, accessToken, vin, value);
 
         // Update the last known good value
         lastReportedTargetLevel = value;
 
-        // Trigger a dashboard poll to refresh all state
+        // Refresh dashboard using the same connection
         log("Refreshing dashboard after target charge level change...");
-        await poll();
+        await poll(awsClient);
       } catch (err) {
         log(`Failed to set target charge level: ${err.message}`);
 
@@ -312,7 +337,8 @@ Docker:
           }
         }
       } finally {
-        commandInProgress = false;
+        if (awsClient) awsClient.end(true);
+        busy = false;
       }
     });
 
@@ -322,7 +348,16 @@ Docker:
     // Schedule recurring polls
     log(`Next poll in ${pollInterval}s`);
     pollTimer = setInterval(async () => {
-      await poll();
+      if (busy) {
+        log("Skipping scheduled poll (operation in progress)");
+        return;
+      }
+      busy = true;
+      try {
+        await poll();
+      } finally {
+        busy = false;
+      }
       if (!shuttingDown) {
         log(`Next poll in ${pollInterval}s`);
       }

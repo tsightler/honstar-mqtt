@@ -5,7 +5,6 @@ function connectAwsMqtt(vin, cigToken, cigSignature) {
   return new Promise((resolve, reject) => {
     debug("Connecting to AWS IoT MQTT...");
 
-    const topic = `$aws/things/thing_${vin}/shadow/name/DASHBOARD_ASYNC/update`;
     const clientId = `paho${Date.now()}`;
     const wsUrl = `wss://${CONFIG.mqttHost}/mqtt`;
 
@@ -30,14 +29,7 @@ function connectAwsMqtt(vin, cigToken, cigSignature) {
 
     client.on("connect", () => {
       debug("AWS IoT MQTT connected");
-      client.subscribe(topic, { qos: 1 }, (err) => {
-        if (err) {
-          reject(err);
-        } else {
-          debug(`Subscribed to: ${topic}`);
-          resolve(client);
-        }
-      });
+      resolve(client);
     });
 
     client.on("error", (err) => {
@@ -55,4 +47,16 @@ function connectAwsMqtt(vin, cigToken, cigSignature) {
   });
 }
 
-module.exports = { connectAwsMqtt };
+function subscribeAwsTopic(awsClient, topic) {
+  return new Promise((resolve, reject) => {
+    awsClient.subscribe(topic, { qos: 1 }, (err) => {
+      if (err) reject(err);
+      else {
+        debug(`Subscribed to: ${topic}`);
+        resolve();
+      }
+    });
+  });
+}
+
+module.exports = { connectAwsMqtt, subscribeAwsTopic };
