@@ -1,0 +1,84 @@
+#!/usr/bin/with-contenv bash
+# ==============================================================================
+# Acura EV MQTT - Service run script
+# Supports both Home Assistant addon and standalone Docker modes
+# ==============================================================================
+
+# Detect if running as a Home Assistant addon
+ADDON_MODE=false
+if curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
+    http://supervisor/info 2>/dev/null | grep -q "200"; then
+    ADDON_MODE=true
+fi
+
+echo "============================================"
+echo " Acura EV MQTT Gateway"
+echo "============================================"
+echo " Mode: $([ "$ADDON_MODE" = true ] && echo "Home Assistant Addon" || echo "Standalone Docker")"
+echo " Node: $(node --version)"
+echo "============================================"
+
+if [ "$ADDON_MODE" = true ]; then
+    # ── Home Assistant Addon Mode ──
+    echo "[init] Loading configuration from Home Assistant..."
+
+    # Read addon options
+    ACURA_EMAIL=$(bashio::config 'acura_email')
+    ACURA_PASSWORD=$(bashio::config 'acura_password')
+    ACURA_VIN=$(bashio::config 'acura_vin')
+    MQTT_URL=$(bashio::config 'mqtt_url')
+    POLL_INTERVAL=$(bashio::config 'poll_interval')
+    DEBUG_MODE=$(bashio::config 'debug')
+
+    # Resolve auto_* MQTT placeholders using HA services API
+    if [[ "$MQTT_URL" == *"auto_"* ]]; then
+        echo "[init] Resolving MQTT auto-discovery placeholders..."
+        MQTT_HOST=$(bashio::services mqtt "host")
+        MQTT_PORT=$(bashio::services mqtt "port")
+        MQTT_USER=$(bashio::services mqtt "username")
+        MQTT_PASS=$(bashio::services mqtt "password")
+
+        MQTT_URL="mqtt://${MQTT_USER}:${MQTT_PASS}@${MQTT_HOST}:${MQTT_PORT}"
+        echo "[init] MQTT broker: ${MQTT_HOST}:${MQTT_PORT}"
+    fi
+
+    # Validate required fields
+    if [ -z "$ACURA_EMAIL" ] || [ -z "$ACURA_PASSWORD" ]; then
+        echo "[init] ERROR: acura_email and acura_password are required"
+        exit 1
+    fi
+
+    # Export as environment variables for the Node.js app
+    export ACURA_USERNAME="$ACURA_EMAIL"
+    export ACURA_PASSWORD="$ACURA_PASSWORD"
+    export ACURA_VIN="$ACURA_VIN"
+    export MQTT_URL="$MQTT_URL"
+    export POLL_INTERVAL="$POLL_INTERVAL"
+    export DEBUG="$DEBUG_MODE"
+
+else
+    # ── Standalone Docker Mode ──
+    echo "[init] Using environment variables for configuration..."
+
+    # Validate required environment variables
+    if [ -z "$ACURA_USERNAME" ]; then
+        echo "[init] ERROR: ACURA_USERNAME environment variable is required"
+        exit 1
+    fi
+
+    if [ -z "$ACURA_PASSWORD" ]; then
+        echo "[init] ERROR: ACURA_PASSWORD environment variable is required"
+        exit 1
+    fi
+
+    if [ -z "$MQTT_URL" ]; then
+        echo "[init] ERROR: MQTT_URL environment variable is required"
+        exit 1
+    fi
+fi
+
+echo "[init] Starting Acura EV MQTT Gateway..."
+
+# Run the application
+cd /app
+exec node index.js

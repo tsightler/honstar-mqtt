@@ -1,12 +1,13 @@
 {
   "name": "acura-ev-connect",
   "version": "1.0.0",
-  "description": "Node.js client for Acura EV connected vehicle services — authenticates, connects via MQTT WebSocket to AWS IoT, and retrieves vehicle dashboard status",
+  "description": "MQTT gateway for Acura EV connected vehicle services — polls vehicle status and publishes to MQTT",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
+    "dotenv": "^16.4.0",
     "mqtt": "^5.10.0",
     "uuid": "^11.1.0"
   },

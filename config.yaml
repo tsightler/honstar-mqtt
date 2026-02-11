@@ -1,0 +1,33 @@
+name: Acura EV MQTT
+version: "1.0.0"
+slug: acura-ev-mqtt
+description: >-
+  Bridges Acura EV connected vehicle data to MQTT.
+  Polls vehicle status (battery, range, tires, charging, odometer)
+  and publishes to MQTT topics.
+url: https://github.com/tsightler/acura-ev
+arch:
+  - amd64
+  - aarch64
+  - armv7
+  - armhf
+startup: application
+boot: auto
+services:
+  - mqtt:need
+options:
+  acura_email: ""
+  acura_password: ""
+  acura_vin: ""
+  mqtt_url: "mqtt://auto_username:auto_password@auto_hostname"
+  poll_interval: 900
+  debug: false
+schema:
+  acura_email: email
+  acura_password: password
+  acura_vin: str?
+  mqtt_url: str?
+  poll_interval: int?
+  debug: bool?
+image: ghcr.io/tsightler/acura-ev-mqtt-{arch}
+init: false
