@@ -300,12 +300,17 @@ Docker:
         );
         awsClient = await connectAwsMqtt(vin, cigToken, cigSignature);
 
-        await setTargetChargeLevel(awsClient, accessToken, vin, value);
-
-        // Poll dashboard until it reflects the new target level
-        log("Waiting for dashboard to confirm target charge level...");
+        // Send command + verify via dashboard, retry the whole cycle if needed
         let confirmed = false;
-        for (let attempt = 1; attempt <= 5; attempt++) {
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          log(
+            attempt === 1
+              ? "Sending set command..."
+              : `Retrying set command (attempt ${attempt}/3)...`
+          );
+          await setTargetChargeLevel(awsClient, accessToken, vin, value);
+
+          log("Polling dashboard to verify target charge level...");
           const dashboard = await pollOnce(
             accessToken,
             hidasIdent,
@@ -326,18 +331,14 @@ Docker:
             }
 
             log(
-              `Dashboard shows target level ${dashboard.chargeSettings?.targetLevel}%, expected ${value}% (attempt ${attempt}/5)`
+              `Dashboard shows target level ${dashboard.chargeSettings?.targetLevel}%, expected ${value}%`
             );
-          }
-
-          if (attempt < 5) {
-            await new Promise((r) => setTimeout(r, 15000));
           }
         }
 
         if (!confirmed) {
           log(
-            `Target charge level ${value}% not confirmed by dashboard, reverting`
+            `Target charge level ${value}% not confirmed after 3 attempts, reverting`
           );
           if (lastReportedTargetLevel != null) {
             brokerClient.publish(
