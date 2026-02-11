@@ -6,6 +6,7 @@ COPY package*.json ./
 RUN npm ci
 
 COPY index.js ./
+COPY src/ ./src/
 
 # Prune dev dependencies
 RUN npm prune --omit=dev
@@ -56,6 +57,7 @@ WORKDIR /app
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/package*.json ./
 COPY --from=builder /app/index.js ./
+COPY --from=builder /app/src ./src
 
 # Copy init scripts (strip Windows CRLF line endings as safety net)
 COPY init/services.d/ /etc/services.d/
