@@ -57,9 +57,10 @@ COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/package*.json ./
 COPY --from=builder /app/index.js ./
 
-# Copy init scripts
+# Copy init scripts (strip Windows CRLF line endings as safety net)
 COPY init/services.d/ /etc/services.d/
-RUN chmod +x /etc/services.d/*/run /etc/services.d/*/finish
+RUN find /etc/services.d/ -type f -exec sed -i 's/\r$//' {} + \
+    && chmod +x /etc/services.d/*/run /etc/services.d/*/finish
 
 # Labels
 LABEL \

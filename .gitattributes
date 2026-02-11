@@ -1,0 +1,4 @@
+# Force Unix line endings for shell scripts and s6 init files
+init/** text eol=lf
+*.sh text eol=lf
+Dockerfile text eol=lf
