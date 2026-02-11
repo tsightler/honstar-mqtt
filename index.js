@@ -517,10 +517,10 @@ function printDashboard(dashboard) {
 
 // Map Acura tire position keys to friendly names and Onstar2MQTT-style slugs
 const TIRE_POSITIONS = {
-  leftFront:  { slug: "tire_pressure_lf", name: "Tire Pressure: Left Front" },
-  rightFront: { slug: "tire_pressure_rf", name: "Tire Pressure: Right Front" },
-  leftRear:   { slug: "tire_pressure_lr", name: "Tire Pressure: Left Rear" },
-  rightRear:  { slug: "tire_pressure_rr", name: "Tire Pressure: Right Rear" },
+  frontLeft:  { slug: "tire_pressure_lf", name: "Tire Pressure: Left Front", placard: "placardFront" },
+  frontRight: { slug: "tire_pressure_rf", name: "Tire Pressure: Right Front", placard: "placardFront" },
+  rearLeft:   { slug: "tire_pressure_lr", name: "Tire Pressure: Left Rear", placard: "placardRear" },
+  rearRight:  { slug: "tire_pressure_rr", name: "Tire Pressure: Right Rear", placard: "placardRear" },
 };
 
 function buildDeviceInfo(vin, vehicle) {
@@ -538,7 +538,7 @@ function buildDeviceInfo(vin, vehicle) {
 
 function publishDiscovery(brokerClient, vin, vehicle) {
   const device = buildDeviceInfo(vin, vehicle);
-  const availTopic = `homeassistant/${vin}/available`;
+  const availTopic = `acura-ev/${vin}/available`;
   const opts = { retain: true, qos: 1 };
 
   function pub(component, slug, config) {
@@ -564,8 +564,7 @@ function publishDiscovery(brokerClient, vin, vehicle) {
     state_class: "measurement",
     unit_of_measurement: "%",
     icon: "mdi:battery-high",
-    state_topic: `homeassistant/sensor/${vin}/ev_battery_level/state`,
-    value_template: "{{ value_json.ev_battery_level }}",
+    state_topic: `acura-ev/${vin}/ev_battery_level/state`,
   });
 
   // EV Range
@@ -575,8 +574,7 @@ function publishDiscovery(brokerClient, vin, vehicle) {
     state_class: "measurement",
     unit_of_measurement: "mi",
     icon: "mdi:ev-station",
-    state_topic: `homeassistant/sensor/${vin}/ev_range/state`,
-    value_template: "{{ value_json.ev_range }}",
+    state_topic: `acura-ev/${vin}/ev_range/state`,
   });
 
   // Odometer
@@ -586,8 +584,7 @@ function publishDiscovery(brokerClient, vin, vehicle) {
     state_class: "total_increasing",
     unit_of_measurement: "mi",
     icon: "mdi:counter",
-    state_topic: `homeassistant/sensor/${vin}/odometer/state`,
-    value_template: "{{ value_json.odometer }}",
+    state_topic: `acura-ev/${vin}/odometer/state`,
   });
 
   // Tire pressures (4 sensors)
@@ -598,35 +595,33 @@ function publishDiscovery(brokerClient, vin, vehicle) {
       state_class: "measurement",
       unit_of_measurement: "psi",
       icon: "mdi:car-tire-alert",
-      state_topic: `homeassistant/sensor/${vin}/tire_pressure/state`,
+      state_topic: `acura-ev/${vin}/tire_pressure/state`,
       value_template: `{{ value_json.${tp.slug} }}`,
-      json_attributes_topic: `homeassistant/sensor/${vin}/tire_pressure/state`,
-      json_attributes_template: `{{ {'warning': value_json.${tp.slug}_warning} | tojson }}`,
+      json_attributes_topic: `acura-ev/${vin}/tire_pressure/state`,
+      json_attributes_template: `{{ {'warning': value_json.${tp.slug}_warning, 'recommendation': value_json.${tp.slug}_placard} | tojson }}`,
     });
   }
 
   // ── Binary Sensors ──
 
-  // EV Charge State (charging / not charging)
+  // EV Charge State — HA displays as "Charging" / "Not charging"
   pub("binary_sensor", "ev_charge_state", {
     name: "EV Charge State",
     device_class: "battery_charging",
     icon: "mdi:battery-charging",
-    payload_on: true,
-    payload_off: false,
-    state_topic: `homeassistant/binary_sensor/${vin}/ev_charge_state/state`,
-    value_template: "{{ value_json.ev_charge_state }}",
+    payload_on: "ON",
+    payload_off: "OFF",
+    state_topic: `acura-ev/${vin}/ev_charge_state/state`,
   });
 
-  // EV Plug State (plugged / unplugged)
+  // EV Plug State — HA displays as "Plugged in" / "Unplugged"
   pub("binary_sensor", "ev_plug_state", {
     name: "EV Plug State",
     device_class: "plug",
     icon: "mdi:ev-plug-type1",
-    payload_on: true,
-    payload_off: false,
-    state_topic: `homeassistant/binary_sensor/${vin}/ev_plug_state/state`,
-    value_template: "{{ value_json.ev_plug_state }}",
+    payload_on: "ON",
+    payload_off: "OFF",
+    state_topic: `acura-ev/${vin}/ev_plug_state/state`,
   });
 
   log("Published HA MQTT discovery configs");
@@ -634,7 +629,7 @@ function publishDiscovery(brokerClient, vin, vehicle) {
 
 function publishAvailability(brokerClient, vin, available) {
   brokerClient.publish(
-    `homeassistant/${vin}/available`,
+    `acura-ev/${vin}/available`,
     available ? "true" : "false",
     { retain: true, qos: 1 }
   );
@@ -646,8 +641,8 @@ function publishStates(brokerClient, vin, dashboard) {
   // Battery level
   if (dashboard.battery?.stateOfCharge != null) {
     brokerClient.publish(
-      `homeassistant/sensor/${vin}/ev_battery_level/state`,
-      JSON.stringify({ ev_battery_level: dashboard.battery.stateOfCharge }),
+      `acura-ev/${vin}/ev_battery_level/state`,
+      String(dashboard.battery.stateOfCharge),
       opts
     );
   }
@@ -655,8 +650,8 @@ function publishStates(brokerClient, vin, dashboard) {
   // EV Range
   if (dashboard.battery?.range != null) {
     brokerClient.publish(
-      `homeassistant/sensor/${vin}/ev_range/state`,
-      JSON.stringify({ ev_range: dashboard.battery.range }),
+      `acura-ev/${vin}/ev_range/state`,
+      String(dashboard.battery.range),
       opts
     );
   }
@@ -664,28 +659,29 @@ function publishStates(brokerClient, vin, dashboard) {
   // Odometer
   if (dashboard.odometer?.value != null) {
     brokerClient.publish(
-      `homeassistant/sensor/${vin}/odometer/state`,
-      JSON.stringify({ odometer: dashboard.odometer.value }),
+      `acura-ev/${vin}/odometer/state`,
+      String(dashboard.odometer.value),
       opts
     );
   }
 
-  // Charge state → binary (Onstar2MQTT mapping)
+  // Charge state → "ON" (charging) / "OFF" (not charging)
   if (dashboard.battery?.chargeStatus != null) {
     const raw = dashboard.battery.chargeStatus;
     const charging =
       raw === "charging" ||
       raw === "CHARGING" ||
       raw === "ACTIVE" ||
-      raw === "connected_charging";
+      raw === "connected_charging" ||
+      raw === "CONNECTION_CHARGING";
     brokerClient.publish(
-      `homeassistant/binary_sensor/${vin}/ev_charge_state/state`,
-      JSON.stringify({ ev_charge_state: charging }),
+      `acura-ev/${vin}/ev_charge_state/state`,
+      charging ? "ON" : "OFF",
       opts
     );
   }
 
-  // Plug state → binary (Onstar2MQTT mapping)
+  // Plug state → "ON" (plugged) / "OFF" (unplugged)
   if (dashboard.battery?.plugStatus != null) {
     const raw = dashboard.battery.plugStatus;
     const plugged =
@@ -694,13 +690,13 @@ function publishStates(brokerClient, vin, dashboard) {
       raw === "CONNECTED" ||
       raw === "connected";
     brokerClient.publish(
-      `homeassistant/binary_sensor/${vin}/ev_plug_state/state`,
-      JSON.stringify({ ev_plug_state: plugged }),
+      `acura-ev/${vin}/ev_plug_state/state`,
+      plugged ? "ON" : "OFF",
       opts
     );
   }
 
-  // Tire pressures (single state topic with all 4 values)
+  // Tire pressures (single state topic with all 4 values + placard recommendations)
   if (dashboard.tires) {
     const tireState = {};
     for (const [pos, data] of Object.entries(dashboard.tires)) {
@@ -708,10 +704,15 @@ function publishStates(brokerClient, vin, dashboard) {
       if (tp) {
         tireState[tp.slug] = data.pressurePsi;
         tireState[`${tp.slug}_warning`] = data.warning;
+        // Include placard (recommended) pressure as attribute
+        const placardData = dashboard.tires[tp.placard];
+        if (placardData) {
+          tireState[`${tp.slug}_placard`] = placardData.pressurePsi;
+        }
       }
     }
     brokerClient.publish(
-      `homeassistant/sensor/${vin}/tire_pressure/state`,
+      `acura-ev/${vin}/tire_pressure/state`,
       JSON.stringify(tireState),
       opts
     );

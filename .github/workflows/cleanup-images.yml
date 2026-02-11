@@ -1,0 +1,24 @@
+name: Cleanup Old Container Images
+
+on:
+  schedule:
+    - cron: '0 0 * * 0'  # Weekly on Sunday at midnight UTC
+  workflow_dispatch:
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+
+    steps:
+      - name: Delete old images
+        uses: snok/container-retention-policy@v2
+        with:
+          image-names: acura-ev-mqtt*
+          cut-off: One week ago UTC
+          keep-at-least: 3
+          untagged-only: false
+          skip-tags: latest
+          account-type: personal
+          token: ${{ secrets.GITHUB_TOKEN }}
