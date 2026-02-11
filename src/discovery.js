@@ -68,6 +68,13 @@ function publishDiscovery(brokerClient, vin, vehicle) {
     state_topic: `acura-ev/${vin}/odometer/state`,
   });
 
+  // Remove old sensor entity (was changed to number)
+  brokerClient.publish(
+    `homeassistant/sensor/${vin}/ev_target_charge_level/config`,
+    "",
+    opts
+  );
+
   // Target Charge Level (settable number entity)
   pub("number", "ev_target_charge_level", {
     name: "EV Target Charge Level",

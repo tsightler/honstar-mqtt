@@ -32,22 +32,15 @@ const { setTargetChargeLevel } = require("./src/commands");
 
 // ─── Poll Cycle ──────────────────────────────────────────────────────────────
 
-async function pollOnce(accessToken, hidasIdent, vin, existingAwsClient) {
-  let awsClient = existingAwsClient;
-  let ownConnection = false;
-
-  if (!awsClient) {
-    const { cigToken, cigSignature } = await getCigToken(
-      accessToken,
-      hidasIdent,
-      vin
-    );
-    awsClient = await connectAwsMqtt(vin, cigToken, cigSignature);
-    ownConnection = true;
-  }
+async function pollOnce(accessToken, hidasIdent, vin) {
+  const { cigToken, cigSignature } = await getCigToken(
+    accessToken,
+    hidasIdent,
+    vin
+  );
+  const awsClient = await connectAwsMqtt(vin, cigToken, cigSignature);
 
   try {
-    // Subscribe to dashboard topic
     const dashTopic = `$aws/things/thing_${vin}/shadow/name/DASHBOARD_ASYNC/update`;
     await subscribeAwsTopic(awsClient, dashTopic);
 
@@ -99,9 +92,7 @@ async function pollOnce(accessToken, hidasIdent, vin, existingAwsClient) {
     clearInterval(retryTimer);
     return dashboard;
   } finally {
-    if (ownConnection) {
-      awsClient.end(true);
-    }
+    awsClient.end(true);
   }
 }
 
@@ -197,12 +188,12 @@ Docker:
   }
 
   // Single poll + publish cycle
-  async function poll(existingAwsClient) {
+  async function poll() {
     if (shuttingDown) return;
 
     log("Starting poll cycle...");
     try {
-      const dashboard = await pollOnce(accessToken, hidasIdent, vin, existingAwsClient);
+      const dashboard = await pollOnce(accessToken, hidasIdent, vin);
       if (dashboard) {
         printDashboard(dashboard);
         publishData(brokerClient, vin, dashboard);
@@ -290,55 +281,58 @@ Docker:
       brokerClient.publish(stateTopic, String(value), opts);
       log(`Optimistically set target charge level state to ${value}%`);
 
-      // Single AWS MQTT connection for both command and dashboard refresh
-      let awsClient;
       try {
-        const { cigToken, cigSignature } = await getCigToken(
-          accessToken,
-          hidasIdent,
-          vin
-        );
-        awsClient = await connectAwsMqtt(vin, cigToken, cigSignature);
-
-        // Send command + verify via dashboard, retry the whole cycle if needed
+        // Up to 5 cycles: send command, then poll dashboard twice ~30s apart
         let confirmed = false;
-        for (let attempt = 1; attempt <= 3; attempt++) {
+        for (let cycle = 1; cycle <= 5; cycle++) {
           log(
-            attempt === 1
+            cycle === 1
               ? "Sending set command..."
-              : `Retrying set command (attempt ${attempt}/3)...`
+              : `Resending set command (cycle ${cycle}/5)...`
           );
-          await setTargetChargeLevel(awsClient, accessToken, vin, value);
-
-          log("Polling dashboard to verify target charge level...");
-          const dashboard = await pollOnce(
+          await setTargetChargeLevel(
             accessToken,
             hidasIdent,
             vin,
-            awsClient
+            value
           );
 
-          if (dashboard) {
-            if (dashboard.chargeSettings?.targetLevel === value) {
-              log(`Dashboard confirmed target charge level: ${value}%`);
-              lastReportedTargetLevel = value;
-              confirmed = true;
-              printDashboard(dashboard);
-              publishData(brokerClient, vin, dashboard);
-              publishStates(brokerClient, vin, dashboard);
-              publishAvailability(brokerClient, vin, true);
-              break;
+          // Poll dashboard up to 2 times, 30s apart
+          for (let poll = 1; poll <= 2; poll++) {
+            if (poll > 1) {
+              log("Waiting 30s before next dashboard poll...");
+              await new Promise((r) => setTimeout(r, 30000));
             }
 
             log(
-              `Dashboard shows target level ${dashboard.chargeSettings?.targetLevel}%, expected ${value}%`
+              `Polling dashboard to verify target charge level (poll ${poll}/2)...`
             );
+            const dashboard = await pollOnce(accessToken, hidasIdent, vin);
+
+            if (dashboard) {
+              if (dashboard.chargeSettings?.targetLevel === value) {
+                log(`Dashboard confirmed target charge level: ${value}%`);
+                lastReportedTargetLevel = value;
+                confirmed = true;
+                printDashboard(dashboard);
+                publishData(brokerClient, vin, dashboard);
+                publishStates(brokerClient, vin, dashboard);
+                publishAvailability(brokerClient, vin, true);
+                break;
+              }
+
+              log(
+                `Dashboard shows target level ${dashboard.chargeSettings?.targetLevel}%, expected ${value}%`
+              );
+            }
           }
+
+          if (confirmed) break;
         }
 
         if (!confirmed) {
           log(
-            `Target charge level ${value}% not confirmed after 3 attempts, reverting`
+            `Target charge level ${value}% not confirmed after 5 cycles, reverting`
           );
           if (lastReportedTargetLevel != null) {
             brokerClient.publish(
@@ -377,7 +371,6 @@ Docker:
           }
         }
       } finally {
-        if (awsClient) awsClient.end(true);
         busy = false;
       }
     });
