@@ -587,6 +587,16 @@ function publishDiscovery(brokerClient, vin, vehicle) {
     state_topic: `acura-ev/${vin}/odometer/state`,
   });
 
+  // Target Charge Level
+  pub("sensor", "ev_target_charge_level", {
+    name: "EV Target Charge Level",
+    device_class: "battery",
+    state_class: "measurement",
+    unit_of_measurement: "%",
+    icon: "mdi:battery-charging-high",
+    state_topic: `acura-ev/${vin}/ev_target_charge_level/state`,
+  });
+
   // Tire pressures (4 sensors)
   for (const [, tp] of Object.entries(TIRE_POSITIONS)) {
     pub("sensor", tp.slug, {
@@ -661,6 +671,15 @@ function publishStates(brokerClient, vin, dashboard) {
     brokerClient.publish(
       `acura-ev/${vin}/odometer/state`,
       String(dashboard.odometer.value),
+      opts
+    );
+  }
+
+  // Target charge level
+  if (dashboard.chargeSettings?.targetLevel != null) {
+    brokerClient.publish(
+      `acura-ev/${vin}/ev_target_charge_level/state`,
+      String(dashboard.chargeSettings.targetLevel),
       opts
     );
   }
