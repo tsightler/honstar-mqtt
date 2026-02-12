@@ -118,6 +118,7 @@ function publishDiscovery(brokerClient, vin, vehicle) {
       unit_of_measurement: "psi",
       icon: "mdi:car-tire-alert",
       state_topic: `acura-ev/${vin}/tire_pressure/state`,
+      suggested_display_precision: 1,
       value_template: `{{ value_json.${tp.slug} }}`,
       json_attributes_topic: `acura-ev/${vin}/tire_pressure/state`,
       json_attributes_template: `{{ {'warning': value_json.${tp.slug}_warning, 'recommendation': value_json.${tp.slug}_placard} | tojson }}`,
