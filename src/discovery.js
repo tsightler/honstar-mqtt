@@ -88,19 +88,25 @@ function publishDiscovery(brokerClient, vin, vehicle) {
     mode: "slider",
   });
 
-  // Climate preconditioning
-  pub("climate", "climate_precondition", {
+  // Climate preconditioning switch
+  pub("switch", "ev_climate", {
     name: "Climate Preconditioning",
     icon: "mdi:air-conditioner",
-    modes: ["off", "auto"],
-    mode_command_topic: `acura-ev/${vin}/climate/mode/set`,
-    mode_state_topic: `acura-ev/${vin}/climate/mode/state`,
-    temperature_command_topic: `acura-ev/${vin}/climate/temperature/set`,
-    temperature_state_topic: `acura-ev/${vin}/climate/temperature/state`,
-    min_temp: 60,
-    max_temp: 90,
-    temp_step: 1,
-    temperature_unit: "F",
+    state_topic: `acura-ev/${vin}/ev_climate/state`,
+    command_topic: `acura-ev/${vin}/ev_climate/set`,
+  });
+
+  // Climate preconditioning temperature
+  pub("number", "ev_climate_temperature", {
+    name: "Climate Temperature",
+    icon: "mdi:thermometer",
+    state_topic: `acura-ev/${vin}/ev_climate_temperature/state`,
+    command_topic: `acura-ev/${vin}/ev_climate_temperature/set`,
+    min: 60,
+    max: 90,
+    step: 1,
+    unit_of_measurement: "°F",
+    mode: "slider",
   });
 
   // Tire pressures (4 sensors)

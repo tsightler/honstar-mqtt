@@ -157,6 +157,7 @@ Docker:
   let optimisticExpiry = 0;
   let climateMode = "off";
   let climateTemp = 72;
+  let climateOffTimer = null;
 
   // Graceful shutdown
   async function shutdown() {
@@ -165,6 +166,7 @@ Docker:
     log("Shutting down...");
 
     if (pollTimer) clearInterval(pollTimer);
+    if (climateOffTimer) clearTimeout(climateOffTimer);
 
     if (brokerClient) {
       if (vin) {
@@ -291,8 +293,8 @@ Docker:
 
     // Subscribe to command topics
     const setChargeTopic = `acura-ev/${vin}/ev_target_charge_level/set`;
-    const climateModeTopic = `acura-ev/${vin}/climate/mode/set`;
-    const climateTempTopic = `acura-ev/${vin}/climate/temperature/set`;
+    const climateModeTopic = `acura-ev/${vin}/ev_climate/set`;
+    const climateTempTopic = `acura-ev/${vin}/ev_climate_temperature/set`;
 
     const commandTopics = [setChargeTopic, climateModeTopic, climateTempTopic];
     brokerClient.subscribe(commandTopics, { qos: 1 }, (err) => {
@@ -306,12 +308,12 @@ Docker:
     // Publish initial climate state
     const mqttOpts = { retain: true, qos: 1 };
     brokerClient.publish(
-      `acura-ev/${vin}/climate/mode/state`,
-      climateMode,
+      `acura-ev/${vin}/ev_climate/state`,
+      climateMode === "auto" ? "ON" : "OFF",
       mqttOpts
     );
     brokerClient.publish(
-      `acura-ev/${vin}/climate/temperature/state`,
+      `acura-ev/${vin}/ev_climate_temperature/state`,
       String(climateTemp),
       mqttOpts
     );
@@ -328,7 +330,7 @@ Docker:
         }
         climateTemp = temp;
         brokerClient.publish(
-          `acura-ev/${vin}/climate/temperature/state`,
+          `acura-ev/${vin}/ev_climate_temperature/state`,
           String(climateTemp),
           mqttOpts
         );
@@ -336,11 +338,11 @@ Docker:
         return;
       }
 
-      // ── Climate mode (start/stop preconditioning) ──
+      // ── Climate switch (start/stop preconditioning) ──
       if (topic === climateModeTopic) {
-        const mode = message.toString().toLowerCase();
-        if (mode !== "auto" && mode !== "off") {
-          log(`Invalid climate mode: ${message.toString()}`);
+        const cmd = message.toString().toUpperCase();
+        if (cmd !== "ON" && cmd !== "OFF") {
+          log(`Invalid climate command: ${message.toString()}`);
           return;
         }
 
@@ -355,6 +357,7 @@ Docker:
         }
 
         busy = true;
+        const climateStateTopic = `acura-ev/${vin}/ev_climate/state`;
         let awsClient;
         try {
           const { cigToken, cigSignature } = await getCigToken(
@@ -364,7 +367,7 @@ Docker:
           );
           awsClient = await connectAwsMqtt(vin, cigToken, cigSignature);
 
-          if (mode === "auto") {
+          if (cmd === "ON") {
             await startClimate(
               awsClient,
               accessToken,
@@ -372,6 +375,16 @@ Docker:
               pin,
               climateTemp
             );
+            climateMode = "auto";
+
+            // Auto-off after 60 minutes (max preconditioning duration)
+            if (climateOffTimer) clearTimeout(climateOffTimer);
+            climateOffTimer = setTimeout(() => {
+              climateMode = "off";
+              climateOffTimer = null;
+              brokerClient.publish(climateStateTopic, "OFF", mqttOpts);
+              log("Climate preconditioning auto-off after 60 minutes");
+            }, 60 * 60 * 1000);
           } else {
             await stopClimate(
               awsClient,
@@ -380,21 +393,21 @@ Docker:
               pin,
               climateTemp
             );
+            climateMode = "off";
+            if (climateOffTimer) {
+              clearTimeout(climateOffTimer);
+              climateOffTimer = null;
+            }
           }
 
-          climateMode = mode;
-          brokerClient.publish(
-            `acura-ev/${vin}/climate/mode/state`,
-            climateMode,
-            mqttOpts
-          );
+          brokerClient.publish(climateStateTopic, cmd, mqttOpts);
         } catch (err) {
           log(`Climate command failed: ${err.message}`);
 
           // Re-publish current state (revert optimistic HA state)
           brokerClient.publish(
-            `acura-ev/${vin}/climate/mode/state`,
-            climateMode,
+            climateStateTopic,
+            climateMode === "auto" ? "ON" : "OFF",
             mqttOpts
           );
 
