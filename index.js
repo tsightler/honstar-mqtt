@@ -358,6 +358,12 @@ Docker:
 
         busy = true;
         const climateStateTopic = `acura-ev/${vin}/ev_climate/state`;
+        const previousMode = climateMode;
+
+        // Optimistically publish the desired state immediately
+        brokerClient.publish(climateStateTopic, cmd, mqttOpts);
+        log(`Optimistically set climate state to ${cmd}`);
+
         let awsClient;
         try {
           const { cigToken, cigSignature } = await getCigToken(
@@ -399,15 +405,14 @@ Docker:
               climateOffTimer = null;
             }
           }
-
-          brokerClient.publish(climateStateTopic, cmd, mqttOpts);
         } catch (err) {
           log(`Climate command failed: ${err.message}`);
 
-          // Re-publish current state (revert optimistic HA state)
+          // Revert to previous state
+          climateMode = previousMode;
           brokerClient.publish(
             climateStateTopic,
-            climateMode === "auto" ? "ON" : "OFF",
+            previousMode === "auto" ? "ON" : "OFF",
             mqttOpts
           );
 
