@@ -28,7 +28,11 @@ const {
   publishAvailability,
   publishStates,
 } = require("./src/discovery");
-const { setTargetChargeLevel } = require("./src/commands");
+const {
+  setTargetChargeLevel,
+  startClimate,
+  stopClimate,
+} = require("./src/commands");
 
 // ─── Poll Cycle ──────────────────────────────────────────────────────────────
 
@@ -103,6 +107,7 @@ async function main() {
   const password = process.env.ACURA_PASSWORD || process.argv[3];
   const targetVin = process.env.ACURA_VIN || process.argv[4];
   const mqttUrl = process.env.MQTT_URL;
+  const pin = process.env.ACURA_PIN || null;
   const pollInterval = parseInt(process.env.POLL_INTERVAL, 10) || 900;
 
   if (!username || !password) {
@@ -118,6 +123,7 @@ Environment variables:
   ACURA_VIN        Vehicle VIN (optional, uses first vehicle)
   MQTT_URL         MQTT broker URL (required)
                    e.g. mqtt://user:pass@192.168.1.100:1883
+  ACURA_PIN        Vehicle PIN for climate commands (optional)
   POLL_INTERVAL    Seconds between polls (default: 900 = 15 min)
   DEBUG            Enable debug logging (true/false, default: false)
 
@@ -147,6 +153,10 @@ Docker:
   let shuttingDown = false;
   let busy = false;
   let lastReportedTargetLevel = null;
+  let optimisticTargetLevel = null;
+  let optimisticExpiry = 0;
+  let climateMode = "off";
+  let climateTemp = 72;
 
   // Graceful shutdown
   async function shutdown() {
@@ -200,9 +210,41 @@ Docker:
         publishStates(brokerClient, vin, dashboard);
         publishAvailability(brokerClient, vin, true);
 
-        // Track last reported target level for optimistic revert
+        // Handle target charge level with optimistic mode awareness
         if (dashboard.chargeSettings?.targetLevel != null) {
-          lastReportedTargetLevel = dashboard.chargeSettings.targetLevel;
+          const dashLevel = dashboard.chargeSettings.targetLevel;
+
+          if (optimisticTargetLevel != null) {
+            if (dashLevel === optimisticTargetLevel) {
+              // Dashboard caught up, clear optimistic mode
+              log(
+                `Dashboard confirmed optimistic target charge level: ${optimisticTargetLevel}%`
+              );
+              lastReportedTargetLevel = dashLevel;
+              optimisticTargetLevel = null;
+              optimisticExpiry = 0;
+            } else if (Date.now() < optimisticExpiry) {
+              // Still in optimistic window, override with optimistic value
+              log(
+                `Dashboard shows ${dashLevel}%, keeping optimistic value ${optimisticTargetLevel}%`
+              );
+              brokerClient.publish(
+                `acura-ev/${vin}/ev_target_charge_level/state`,
+                String(optimisticTargetLevel),
+                { retain: true, qos: 1 }
+              );
+            } else {
+              // Optimistic window expired, accept dashboard value
+              log(
+                `Optimistic mode expired, accepting dashboard value ${dashLevel}%`
+              );
+              lastReportedTargetLevel = dashLevel;
+              optimisticTargetLevel = null;
+              optimisticExpiry = 0;
+            }
+          } else {
+            lastReportedTargetLevel = dashLevel;
+          }
         }
 
         brokerClient.publish(`acura-ev/${vin}/status`, "online", {
@@ -249,15 +291,134 @@ Docker:
 
     // Subscribe to command topics
     const setChargeTopic = `acura-ev/${vin}/ev_target_charge_level/set`;
-    brokerClient.subscribe(setChargeTopic, { qos: 1 }, (err) => {
+    const climateModeTopic = `acura-ev/${vin}/climate/mode/set`;
+    const climateTempTopic = `acura-ev/${vin}/climate/temperature/set`;
+
+    const commandTopics = [setChargeTopic, climateModeTopic, climateTempTopic];
+    brokerClient.subscribe(commandTopics, { qos: 1 }, (err) => {
       if (err) {
-        log(`Failed to subscribe to ${setChargeTopic}: ${err.message}`);
+        log(`Failed to subscribe to command topics: ${err.message}`);
       } else {
-        log(`Listening for commands on ${setChargeTopic}`);
+        log("Listening for commands");
       }
     });
 
+    // Publish initial climate state
+    const mqttOpts = { retain: true, qos: 1 };
+    brokerClient.publish(
+      `acura-ev/${vin}/climate/mode/state`,
+      climateMode,
+      mqttOpts
+    );
+    brokerClient.publish(
+      `acura-ev/${vin}/climate/temperature/state`,
+      String(climateTemp),
+      mqttOpts
+    );
+
     brokerClient.on("message", async (topic, message) => {
+      // ── Climate temperature (no API call, just store) ──
+      if (topic === climateTempTopic) {
+        const temp = parseInt(message.toString(), 10);
+        if (isNaN(temp) || temp < 60 || temp > 90) {
+          log(
+            `Invalid climate temperature: ${message.toString()} (must be 60-90)`
+          );
+          return;
+        }
+        climateTemp = temp;
+        brokerClient.publish(
+          `acura-ev/${vin}/climate/temperature/state`,
+          String(climateTemp),
+          mqttOpts
+        );
+        log(`Climate temperature set to ${climateTemp}°F`);
+        return;
+      }
+
+      // ── Climate mode (start/stop preconditioning) ──
+      if (topic === climateModeTopic) {
+        const mode = message.toString().toLowerCase();
+        if (mode !== "auto" && mode !== "off") {
+          log(`Invalid climate mode: ${message.toString()}`);
+          return;
+        }
+
+        if (!pin) {
+          log("Cannot control climate: ACURA_PIN not configured");
+          return;
+        }
+
+        if (busy) {
+          log("Operation in progress, ignoring climate command");
+          return;
+        }
+
+        busy = true;
+        let awsClient;
+        try {
+          const { cigToken, cigSignature } = await getCigToken(
+            accessToken,
+            hidasIdent,
+            vin
+          );
+          awsClient = await connectAwsMqtt(vin, cigToken, cigSignature);
+
+          if (mode === "auto") {
+            await startClimate(
+              awsClient,
+              accessToken,
+              vin,
+              pin,
+              climateTemp
+            );
+          } else {
+            await stopClimate(
+              awsClient,
+              accessToken,
+              vin,
+              pin,
+              climateTemp
+            );
+          }
+
+          climateMode = mode;
+          brokerClient.publish(
+            `acura-ev/${vin}/climate/mode/state`,
+            climateMode,
+            mqttOpts
+          );
+        } catch (err) {
+          log(`Climate command failed: ${err.message}`);
+
+          // Re-publish current state (revert optimistic HA state)
+          brokerClient.publish(
+            `acura-ev/${vin}/climate/mode/state`,
+            climateMode,
+            mqttOpts
+          );
+
+          if (
+            err.message.includes("401") ||
+            err.message.includes("403") ||
+            err.message.includes("Auth") ||
+            err.message.includes("token")
+          ) {
+            log("Possible auth error, re-authenticating...");
+            try {
+              await authenticate();
+            } catch (authErr) {
+              log(`Re-authentication failed: ${authErr.message}`);
+            }
+          }
+        } finally {
+          if (awsClient) awsClient.end(true);
+          busy = false;
+        }
+        return;
+      }
+
+      // ── Set target charge level ──
       if (topic !== setChargeTopic) return;
 
       const value = parseInt(message.toString(), 10);
@@ -275,77 +436,32 @@ Docker:
 
       busy = true;
       const stateTopic = `acura-ev/${vin}/ev_target_charge_level/state`;
-      const opts = { retain: true, qos: 1 };
 
       // Optimistically publish the desired value immediately
-      brokerClient.publish(stateTopic, String(value), opts);
+      brokerClient.publish(stateTopic, String(value), mqttOpts);
       log(`Optimistically set target charge level state to ${value}%`);
 
+      let awsClient;
       try {
-        // Up to 5 cycles: send command, then poll dashboard twice ~30s apart
-        let confirmed = false;
-        for (let cycle = 1; cycle <= 5; cycle++) {
-          log(
-            cycle === 1
-              ? "Sending set command..."
-              : `Resending set command (cycle ${cycle}/5)...`
-          );
-          await setTargetChargeLevel(
-            accessToken,
-            hidasIdent,
-            vin,
-            value
-          );
+        const { cigToken, cigSignature } = await getCigToken(
+          accessToken,
+          hidasIdent,
+          vin
+        );
+        awsClient = await connectAwsMqtt(vin, cigToken, cigSignature);
 
-          // Poll dashboard up to 2 times, 30s apart
-          for (let poll = 1; poll <= 2; poll++) {
-            if (poll > 1) {
-              log("Waiting 30s before next dashboard poll...");
-              await new Promise((r) => setTimeout(r, 30000));
-            }
+        await setTargetChargeLevel(awsClient, accessToken, vin, value);
 
-            log(
-              `Polling dashboard to verify target charge level (poll ${poll}/2)...`
-            );
-            const dashboard = await pollOnce(accessToken, hidasIdent, vin);
-
-            if (dashboard) {
-              if (dashboard.chargeSettings?.targetLevel === value) {
-                log(`Dashboard confirmed target charge level: ${value}%`);
-                lastReportedTargetLevel = value;
-                confirmed = true;
-                printDashboard(dashboard);
-                publishData(brokerClient, vin, dashboard);
-                publishStates(brokerClient, vin, dashboard);
-                publishAvailability(brokerClient, vin, true);
-                break;
-              }
-
-              log(
-                `Dashboard shows target level ${dashboard.chargeSettings?.targetLevel}%, expected ${value}%`
-              );
-            }
-          }
-
-          if (confirmed) break;
-        }
-
-        if (!confirmed) {
-          log(
-            `Target charge level ${value}% not confirmed after 5 cycles, reverting`
-          );
-          if (lastReportedTargetLevel != null) {
-            brokerClient.publish(
-              stateTopic,
-              String(lastReportedTargetLevel),
-              opts
-            );
-          }
-        }
+        // Command accepted — enter optimistic mode for 15 minutes
+        optimisticTargetLevel = value;
+        optimisticExpiry = Date.now() + 15 * 60 * 1000;
+        log(`Command accepted, optimistic mode active for 15 minutes`);
       } catch (err) {
         log(`Failed to set target charge level: ${err.message}`);
 
-        // Revert to previously reported value since all retries failed
+        // Revert since the command itself failed
+        optimisticTargetLevel = null;
+        optimisticExpiry = 0;
         if (lastReportedTargetLevel != null) {
           log(
             `Reverting target charge level state to ${lastReportedTargetLevel}%`
@@ -353,7 +469,7 @@ Docker:
           brokerClient.publish(
             stateTopic,
             String(lastReportedTargetLevel),
-            opts
+            mqttOpts
           );
         }
 
@@ -371,6 +487,7 @@ Docker:
           }
         }
       } finally {
+        if (awsClient) awsClient.end(true);
         busy = false;
       }
     });

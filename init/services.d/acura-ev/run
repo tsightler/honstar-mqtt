@@ -25,6 +25,7 @@ if [ "$ADDON_MODE" = true ]; then
     # Read addon options
     ACURA_EMAIL=$(bashio::config 'acura_email')
     ACURA_PASSWORD=$(bashio::config 'acura_password')
+    ACURA_PIN=$(bashio::config 'acura_pin')
     ACURA_VIN=$(bashio::config 'acura_vin')
     MQTT_URL=$(bashio::config 'mqtt_url')
     POLL_INTERVAL=$(bashio::config 'poll_interval')
@@ -51,6 +52,7 @@ if [ "$ADDON_MODE" = true ]; then
     # Export as environment variables for the Node.js app
     export ACURA_USERNAME="$ACURA_EMAIL"
     export ACURA_PASSWORD="$ACURA_PASSWORD"
+    export ACURA_PIN="$ACURA_PIN"
     export ACURA_VIN="$ACURA_VIN"
     export MQTT_URL="$MQTT_URL"
     export POLL_INTERVAL="$POLL_INTERVAL"
