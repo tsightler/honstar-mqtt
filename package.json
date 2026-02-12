@@ -1,6 +1,6 @@
 {
   "name": "acura-ev-mqtt",
-  "version": "1.2.2",
+  "version": "1.2.3",
   "description": "MQTT gateway for Acura EV connected vehicle services — polls vehicle status and publishes to MQTT",
   "main": "index.js",
   "scripts": {
