@@ -52,7 +52,6 @@ function publishDiscovery(brokerClient, vin, vehicle) {
 
   pub("sensor", "ev_range", {
     name: "EV Range",
-    device_class: "distance",
     state_class: "measurement",
     unit_of_measurement: "mi",
     icon: "mdi:ev-station",
@@ -61,7 +60,6 @@ function publishDiscovery(brokerClient, vin, vehicle) {
 
   pub("sensor", "odometer", {
     name: "Odometer",
-    device_class: "distance",
     state_class: "total_increasing",
     unit_of_measurement: "mi",
     icon: "mdi:counter",
@@ -168,7 +166,7 @@ function publishStates(brokerClient, vin, dashboard) {
   if (dashboard.battery?.range != null) {
     brokerClient.publish(
       `acura-ev/${vin}/ev_range/state`,
-      String(dashboard.battery.range),
+      String(Math.round(dashboard.battery.range)),
       opts
     );
   }
@@ -176,7 +174,7 @@ function publishStates(brokerClient, vin, dashboard) {
   if (dashboard.odometer?.value != null) {
     brokerClient.publish(
       `acura-ev/${vin}/odometer/state`,
-      String(dashboard.odometer.value),
+      String(Math.round(dashboard.odometer.value)),
       opts
     );
   }
