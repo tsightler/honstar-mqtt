@@ -159,6 +159,7 @@ Docker:
   let climateMode = "off";
   let climateTemp = 72;
   let climateOffTimer = null;
+  let pendingClimateCmd = null;
 
   // Graceful shutdown
   async function shutdown() {
@@ -353,87 +354,17 @@ Docker:
         }
 
         if (busy) {
-          log("Operation in progress, ignoring climate command");
+          pendingClimateCmd = cmd;
+          log(`Operation in progress, queued climate ${cmd}`);
+          brokerClient.publish(
+            `acura-ev/${vin}/ev_climate/state`,
+            cmd,
+            mqttOpts
+          );
           return;
         }
 
-        busy = true;
-        const climateStateTopic = `acura-ev/${vin}/ev_climate/state`;
-        const previousMode = climateMode;
-
-        // Optimistically publish the desired state immediately
-        brokerClient.publish(climateStateTopic, cmd, mqttOpts);
-        log(`Optimistically set climate state to ${cmd}`);
-
-        let awsClient;
-        try {
-          const { cigToken, cigSignature } = await getCigToken(
-            accessToken,
-            hidasIdent,
-            vin
-          );
-          awsClient = await connectAwsMqtt(vin, cigToken, cigSignature);
-
-          if (cmd === "ON") {
-            await startClimate(
-              awsClient,
-              accessToken,
-              vin,
-              pin,
-              climateTemp
-            );
-            climateMode = "auto";
-
-            // Auto-off after 60 minutes (max preconditioning duration)
-            if (climateOffTimer) clearTimeout(climateOffTimer);
-            climateOffTimer = setTimeout(() => {
-              climateMode = "off";
-              climateOffTimer = null;
-              brokerClient.publish(climateStateTopic, "OFF", mqttOpts);
-              log("Climate preconditioning auto-off after 60 minutes");
-            }, 60 * 60 * 1000);
-          } else {
-            await stopClimate(
-              awsClient,
-              accessToken,
-              vin,
-              pin,
-              climateTemp
-            );
-            climateMode = "off";
-            if (climateOffTimer) {
-              clearTimeout(climateOffTimer);
-              climateOffTimer = null;
-            }
-          }
-        } catch (err) {
-          log(`Climate command failed: ${err.message}`);
-
-          // Revert to previous state
-          climateMode = previousMode;
-          brokerClient.publish(
-            climateStateTopic,
-            previousMode === "auto" ? "ON" : "OFF",
-            mqttOpts
-          );
-
-          if (
-            err.message.includes("401") ||
-            err.message.includes("403") ||
-            err.message.includes("Auth") ||
-            err.message.includes("token")
-          ) {
-            log("Possible auth error, re-authenticating...");
-            try {
-              await authenticate();
-            } catch (authErr) {
-              log(`Re-authentication failed: ${authErr.message}`);
-            }
-          }
-        } finally {
-          if (awsClient) awsClient.end(true);
-          busy = false;
-        }
+        await executeClimateCmd(cmd);
         return;
       }
 
@@ -524,8 +455,98 @@ Docker:
         busy = false;
       }
 
-      // Process any queued command
-      if (pendingChargeLevel != null) {
+      await processPendingCommands();
+    }
+
+    async function executeClimateCmd(cmd) {
+      busy = true;
+      pendingClimateCmd = null;
+      const climateStateTopic = `acura-ev/${vin}/ev_climate/state`;
+      const previousMode = climateMode;
+
+      // Optimistically publish the desired state immediately
+      brokerClient.publish(climateStateTopic, cmd, mqttOpts);
+      log(`Optimistically set climate state to ${cmd}`);
+
+      let awsClient;
+      try {
+        const { cigToken, cigSignature } = await getCigToken(
+          accessToken,
+          hidasIdent,
+          vin
+        );
+        awsClient = await connectAwsMqtt(vin, cigToken, cigSignature);
+
+        if (cmd === "ON") {
+          await startClimate(
+            awsClient,
+            accessToken,
+            vin,
+            pin,
+            climateTemp
+          );
+          climateMode = "auto";
+
+          // Auto-off after 60 minutes (max preconditioning duration)
+          if (climateOffTimer) clearTimeout(climateOffTimer);
+          climateOffTimer = setTimeout(() => {
+            climateMode = "off";
+            climateOffTimer = null;
+            brokerClient.publish(climateStateTopic, "OFF", mqttOpts);
+            log("Climate preconditioning auto-off after 60 minutes");
+          }, 60 * 60 * 1000);
+        } else {
+          await stopClimate(
+            awsClient,
+            accessToken,
+            vin,
+            pin,
+            climateTemp
+          );
+          climateMode = "off";
+          if (climateOffTimer) {
+            clearTimeout(climateOffTimer);
+            climateOffTimer = null;
+          }
+        }
+      } catch (err) {
+        log(`Climate command failed: ${err.message}`);
+
+        // Revert to previous state
+        climateMode = previousMode;
+        brokerClient.publish(
+          climateStateTopic,
+          previousMode === "auto" ? "ON" : "OFF",
+          mqttOpts
+        );
+
+        if (
+          err.message.includes("401") ||
+          err.message.includes("403") ||
+          err.message.includes("Auth") ||
+          err.message.includes("token")
+        ) {
+          log("Possible auth error, re-authenticating...");
+          try {
+            await authenticate();
+          } catch (authErr) {
+            log(`Re-authentication failed: ${authErr.message}`);
+          }
+        }
+      } finally {
+        if (awsClient) awsClient.end(true);
+        busy = false;
+      }
+
+      await processPendingCommands();
+    }
+
+    async function processPendingCommands() {
+      if (pendingClimateCmd != null) {
+        const next = pendingClimateCmd;
+        log(`Processing queued climate ${next}`);
+        await executeClimateCmd(next);
+      } else if (pendingChargeLevel != null) {
         const next = pendingChargeLevel;
         log(`Processing queued target charge level ${next}%`);
         await executeSetChargeLevel(next);
