@@ -152,6 +152,7 @@ Docker:
   let pollTimer = null;
   let shuttingDown = false;
   let busy = false;
+  let pendingChargeLevel = null;
   let lastReportedTargetLevel = null;
   let optimisticTargetLevel = null;
   let optimisticExpiry = 0;
@@ -448,11 +449,25 @@ Docker:
       }
 
       if (busy) {
-        log("Operation in progress, ignoring set target charge level");
+        pendingChargeLevel = value;
+        log(
+          `Operation in progress, queued target charge level ${value}%`
+        );
+        // Optimistically update the display even while queued
+        brokerClient.publish(
+          `acura-ev/${vin}/ev_target_charge_level/state`,
+          String(value),
+          mqttOpts
+        );
         return;
       }
 
+      await executeSetChargeLevel(value);
+    });
+
+    async function executeSetChargeLevel(value) {
       busy = true;
+      pendingChargeLevel = null;
       const stateTopic = `acura-ev/${vin}/ev_target_charge_level/state`;
 
       // Optimistically publish the desired value immediately
@@ -508,7 +523,14 @@ Docker:
         if (awsClient) awsClient.end(true);
         busy = false;
       }
-    });
+
+      // Process any queued command
+      if (pendingChargeLevel != null) {
+        const next = pendingChargeLevel;
+        log(`Processing queued target charge level ${next}%`);
+        await executeSetChargeLevel(next);
+      }
+    }
 
     // Run first poll immediately
     await poll();
