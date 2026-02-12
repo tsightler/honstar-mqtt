@@ -161,7 +161,7 @@ function publishStates(brokerClient, vin, dashboard) {
   if (dashboard.battery?.stateOfCharge != null) {
     brokerClient.publish(
       `acura-ev/${vin}/ev_battery_level/state`,
-      String(dashboard.battery.stateOfCharge),
+      String(Math.round(dashboard.battery.stateOfCharge)),
       opts
     );
   }
@@ -224,11 +224,11 @@ function publishStates(brokerClient, vin, dashboard) {
     for (const [pos, data] of Object.entries(dashboard.tires)) {
       const tp = TIRE_POSITIONS[pos];
       if (tp) {
-        tireState[tp.slug] = data.pressurePsi;
+        tireState[tp.slug] = Math.round(data.pressurePsi * 10) / 10;
         tireState[`${tp.slug}_warning`] = data.warning;
         const placardData = dashboard.tires[tp.placard];
         if (placardData) {
-          tireState[`${tp.slug}_placard`] = placardData.pressurePsi;
+          tireState[`${tp.slug}_placard`] = Math.round(placardData.pressurePsi * 10) / 10;
         }
       }
     }
