@@ -113,7 +113,6 @@ function publishDiscovery(brokerClient, vin, vehicle) {
   for (const [, tp] of Object.entries(TIRE_POSITIONS)) {
     pub("sensor", tp.slug, {
       name: tp.name,
-      device_class: "pressure",
       state_class: "measurement",
       unit_of_measurement: "psi",
       icon: "mdi:car-tire-alert",
