@@ -35,7 +35,7 @@ else {
   process.exit(1);
 }
 
-console.log(`Bumping version: ${pkg.version} → ${newVersion} (${bumpType})`);
+console.log(`Bumping version: ${pkg.version} → ${newVersion}`);
 
 // Update package.json
 pkg.version = newVersion;
