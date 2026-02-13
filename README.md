@@ -1,12 +1,135 @@
-# Acura EV Connect - Node.js Client
+# Acura EV MQTT Gateway
 
-A Node.js application that authenticates to Acura's connected vehicle services and retrieves real-time vehicle status (battery level, range, tire pressures, charge status, odometer, etc.) via MQTT over WebSocket.
+A Node.js application that bridges Acura EV connected vehicle data to MQTT, with Home Assistant auto-discovery support. Polls vehicle status (battery, range, tire pressures, charging, odometer) and publishes to MQTT topics. Supports setting target charge level and climate preconditioning via MQTT commands.
 
 Built by reverse-engineering the Acura EV Android app's API flow.
 
+## Features
+
+- Battery level, range, and charge status
+- Plug state and charge mode
+- Odometer
+- Tire pressures with warning states
+- Set target charge level (50-100%)
+- Climate preconditioning start/stop with temperature control
+- Home Assistant MQTT discovery (auto-creates entities)
+- Configurable poll interval
+
+## Installation
+
+### Home Assistant Addon
+
+1. In Home Assistant, go to **Settings > Add-ons > Add-on Store**
+2. Click the **three-dot menu** (top right) and select **Repositories**
+3. Add this repository URL:
+   ```
+   https://github.com/tsightler/acura-ev
+   ```
+4. Find **Acura EV MQTT** in the add-on store and click **Install**
+5. Go to the addon **Configuration** tab and fill in your settings:
+   - **acura_email** — Your Acura EV account email
+   - **acura_password** — Your Acura EV account password
+   - **acura_pin** — Your Acura EV account PIN (required for climate preconditioning)
+   - **acura_vin** — Your vehicle's VIN (optional, defaults to first vehicle)
+   - **mqtt_url** — MQTT broker URL (leave default to auto-discover from the Mosquitto addon)
+   - **poll_interval** — Seconds between vehicle polls (default: 900)
+   - **debug** — Enable debug logging (default: false)
+6. Click **Start**
+
+The addon will automatically connect to your MQTT broker and create Home Assistant entities via MQTT discovery.
+
+### Docker
+
+```bash
+docker run -d \
+  --name acura-ev-mqtt \
+  --restart unless-stopped \
+  -e ACURA_USERNAME="your@email.com" \
+  -e ACURA_PASSWORD="yourpassword" \
+  -e ACURA_PIN="1234" \
+  -e ACURA_VIN="YOUR_VIN" \
+  -e MQTT_URL="mqtt://user:password@mqtt-broker:1883" \
+  -e POLL_INTERVAL=900 \
+  -e DEBUG=false \
+  ghcr.io/tsightler/acura-ev-mqtt-amd64
+```
+
+Replace `amd64` with your architecture (`aarch64`, `armv7`, `armhf`) if needed.
+
+#### Docker Compose
+
+```yaml
+services:
+  acura-ev-mqtt:
+    image: ghcr.io/tsightler/acura-ev-mqtt-amd64
+    container_name: acura-ev-mqtt
+    restart: unless-stopped
+    environment:
+      - ACURA_USERNAME=your@email.com
+      - ACURA_PASSWORD=yourpassword
+      - ACURA_PIN=1234
+      - ACURA_VIN=YOUR_VIN
+      - MQTT_URL=mqtt://user:password@mqtt-broker:1883
+      - POLL_INTERVAL=900
+      - DEBUG=false
+```
+
+### Standalone (Node.js)
+
+```bash
+npm install
+```
+
+#### Command Line
+
+```bash
+node index.js <email> <password> [vin]
+```
+
+#### Environment Variables
+
+```bash
+export ACURA_USERNAME="your@email.com"
+export ACURA_PASSWORD="yourpassword"
+export ACURA_PIN="1234"
+export ACURA_VIN="YOUR_VIN"
+export MQTT_URL="mqtt://user:password@localhost:1883"
+export POLL_INTERVAL=900
+
+node index.js
+```
+
+## Environment Variables
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `ACURA_USERNAME` | Yes | Acura EV account email |
+| `ACURA_PASSWORD` | Yes | Acura EV account password |
+| `ACURA_PIN` | No | Account PIN (required for climate preconditioning) |
+| `ACURA_VIN` | No | Vehicle VIN (defaults to first vehicle on account) |
+| `MQTT_URL` | Yes | MQTT broker URL (e.g. `mqtt://user:pass@host:1883`) |
+| `POLL_INTERVAL` | No | Seconds between polls (default: 900) |
+| `DEBUG` | No | Enable debug logging (default: false) |
+
+## Home Assistant Entities
+
+Once running, the following entities are automatically created via MQTT discovery:
+
+| Entity | Type | Description |
+|--------|------|-------------|
+| EV Battery Level | Sensor | State of charge (%) |
+| EV Range | Sensor | Estimated range (mi) |
+| Odometer | Sensor | Total odometer (mi) |
+| EV Charge State | Binary Sensor | Charging or not |
+| EV Plug State | Binary Sensor | Plugged in or not |
+| EV Target Charge Level | Number | Settable charge target (50-100%) |
+| Climate Preconditioning | Switch | Start/stop cabin preconditioning |
+| Climate Temperature | Number | Preconditioning target temp (60-90°F) |
+| Tire Pressure (x4) | Sensor | Individual tire pressures (psi) |
+
 ## How It Works
 
-The app follows the same flow as the official Acura EV Android app:
+The app follows the same authentication and data flow as the official Acura EV app:
 
 ```
 1. Register Client       → identity.services.honda.com  → client_reg_key
@@ -19,122 +142,19 @@ The app follows the same flow as the official Acura EV Android app:
 8. Receive Data          → via MQTT message               → battery, range, tires, etc.
 ```
 
-The vehicle data is delivered asynchronously — the REST API triggers a request to the vehicle via GM's OnStar/BEV3 platform, and the response arrives over MQTT when the vehicle responds.
-
-## Requirements
-
-- Node.js 18+
-- An Acura EV account (the same email/password you use in the Acura EV app)
-- A vehicle enrolled in Acura connected services (BEV3 platform — ZDX, etc.)
-
-## Installation
-
-```bash
-npm install
-```
-
-## Usage
-
-### Command Line
-
-```bash
-node index.js <email> <password> [vin]
-```
-
-### Environment Variables
-
-```bash
-export ACURA_USERNAME="your@email.com"
-export ACURA_PASSWORD="yourpassword"
-export ACURA_VIN="YOUR_VIN"  # optional, defaults to first vehicle
-
-node index.js
-```
-
-### Example Output
-
-```
-[1/7] Registering client...
-  ✓ client_reg_key: xxxxxxxx...
-
-[2/7] Authenticating...
-  ✓ access_token: xxxxxxxxxx...
-  ✓ user: First Last
-
-[3/7] Fetching vehicles...
-  ✓ 2024 Acura ZDX (1XXXXXXXXXXXXXXXXX)
-    Platform: BEV3
-
-[4/7] Getting CIG token for MQTT...
-  ✓ CIG JWT: eyJhbGci...
-  ✓ Signature: xxxxxxxx...
-
-[5/7] Connecting to MQTT over WebSocket...
-  ✓ MQTT connected!
-[6/7] Subscribing to: $aws/things/thing_1XXXXXXXXXXXXXXXXX/shadow/name/DASHBOARD_ASYNC/update
-  ✓ Subscribed!
-
-[7/7] Requesting dashboard data (async)...
-  ✓ Request ID: 1XXXXXXXXXXXXXXXXX_0000000000000_...
-
-  ⏳ Waiting for dashboard data via MQTT...
-
-════════════════════════════════════════════════════════════
-  VEHICLE DASHBOARD STATUS
-════════════════════════════════════════════════════════════
-  Timestamp:  2026-02-10T18:13:07Z
-  Status:     success
-
-  ⚡ BATTERY & CHARGING
-     Charge:        66%
-     Range:         183.0 miles
-     Charge Status: UNCONNECTED
-     Plug Status:   unplugged
-
-  🔢 ODOMETER: 12345 Miles
-
-  🛞 TIRE PRESSURES
-     front Right      36.5 PSI (252 kPa)  (OFF)
-     front Left       36.5 PSI (252 kPa)  (OFF)
-     rear Right       42.9 PSI (296 kPa)  (OFF)
-     rear Left        41.8 PSI (288 kPa)  (OFF)
-
-  🔌 CHARGE SETTINGS
-     Mode:         CHARGE_NOW
-     Target Level: 85%
-     Cabin Precond: OFF
-     Est. Range at Target: 239 Miles
-     Charge Complete: Tuesday 14:45
-
-════════════════════════════════════════════════════════════
-```
-
-## API Endpoints Reference
-
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `identity.services.honda.com/hidas/rs/client/register` | POST | Register app client |
-| `identity.services.honda.com/hidas/rs/token/generate` | POST | Login / get bearer token |
-| `wsc.hondaweb.com/REST/NGT/MyVehicle/1.0` | GET | List enrolled vehicles |
-| `wsc.hondaweb.com/REST/CIG/services/1.0/token` | POST | Get CIG JWT for MQTT auth |
-| `wsc.hondaweb.com/REST/NGT/CIG/dbd/async` | POST | Request dashboard data |
-| `am7ptks1rwalc-ats.iot.us-east-2.amazonaws.com/mqtt` | WSS | AWS IoT MQTT broker |
-
-## MQTT Topics
-
-- **Dashboard**: `$aws/things/thing_{VIN}/shadow/name/DASHBOARD_ASYNC/update`
+Vehicle data is delivered asynchronously — the REST API triggers a request to the vehicle, and the response arrives over MQTT when the vehicle responds. The gateway then publishes the data to your MQTT broker with Home Assistant discovery configs.
 
 ## Notes
 
 - The vehicle must have cellular connectivity to respond to dashboard requests.
-- Data is delivered asynchronously; the app retries every 10 seconds for up to 60 seconds.
+- Climate preconditioning auto-turns off after 60 minutes (vehicle limitation).
 - The BEV3 telematics platform is used by Acura ZDX and similar GM-platform vehicles.
 - Access tokens are long-lived (~180 days) but the CIG JWT expires in ~30 minutes.
-- The MQTT connection uses AWS IoT's custom authorizer (`CPSD-IOT-CustAuthorizer-prod`).
+- Requires Node.js 18+.
 
 ## Security Notice
 
-This application requires your Acura account credentials. Keep them secure and never commit them to version control. Use environment variables in production.
+This application requires your Acura account credentials. Keep them secure and never commit them to version control. Use environment variables or the Home Assistant addon configuration (which stores them encrypted).
 
 ## License
 
