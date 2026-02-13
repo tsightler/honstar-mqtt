@@ -32,7 +32,7 @@ Built by reverse-engineering the Acura EV Android app's API flow.
    - **acura_pin** — Your Acura EV account PIN (required for climate preconditioning)
    - **acura_vin** — Your vehicle's VIN (optional, defaults to first vehicle)
    - **mqtt_url** — MQTT broker URL (leave default to auto-discover from the Mosquitto addon)
-   - **poll_interval** — Seconds between vehicle polls (default: 900)
+   - **poll_interval** — Seconds between vehicle polls (minimum/default: 900)
    - **debug** — Enable debug logging (default: false)
 6. Click **Start**
 
@@ -108,7 +108,7 @@ node index.js
 | `ACURA_PIN` | No | Account PIN (required for climate preconditioning) |
 | `ACURA_VIN` | No | Vehicle VIN (defaults to first vehicle on account) |
 | `MQTT_URL` | Yes | MQTT broker URL (e.g. `mqtt://user:pass@host:1883`) |
-| `POLL_INTERVAL` | No | Seconds between polls (default: 900) |
+| `POLL_INTERVAL` | No | Seconds between polls (minimum/default: 900) |
 | `DEBUG` | No | Enable debug logging (default: false) |
 
 ## Home Assistant Entities

@@ -108,7 +108,7 @@ async function main() {
   const targetVin = process.env.ACURA_VIN || process.argv[4];
   const mqttUrl = process.env.MQTT_URL;
   const pin = process.env.ACURA_PIN || null;
-  const pollInterval = parseInt(process.env.POLL_INTERVAL, 10) || 900;
+  const pollInterval = Math.max(parseInt(process.env.POLL_INTERVAL, 10) || 900, 900);
 
   if (!username || !password) {
     console.log(`
@@ -124,7 +124,7 @@ Environment variables:
   MQTT_URL         MQTT broker URL (required)
                    e.g. mqtt://user:pass@192.168.1.100:1883
   ACURA_PIN        Vehicle PIN for climate commands (optional)
-  POLL_INTERVAL    Seconds between polls (default: 900 = 15 min)
+  POLL_INTERVAL    Seconds between polls (minimum/default: 900 = 15 min)
   DEBUG            Enable debug logging (true/false, default: false)
 
 Docker:

@@ -47,6 +47,7 @@ function publishDiscovery(brokerClient, vin, vehicle) {
     state_class: "measurement",
     unit_of_measurement: "%",
     icon: "mdi:battery-high",
+    force_update: true,
     state_topic: `acura-ev/${vin}/ev_battery_level/state`,
   });
 
@@ -55,6 +56,7 @@ function publishDiscovery(brokerClient, vin, vehicle) {
     state_class: "measurement",
     unit_of_measurement: "mi",
     icon: "mdi:ev-station",
+    force_update: true,
     state_topic: `acura-ev/${vin}/ev_range/state`,
   });
 
@@ -63,6 +65,7 @@ function publishDiscovery(brokerClient, vin, vehicle) {
     state_class: "total_increasing",
     unit_of_measurement: "mi",
     icon: "mdi:counter",
+    force_update: true,
     state_topic: `acura-ev/${vin}/odometer/state`,
   });
 
@@ -114,6 +117,7 @@ function publishDiscovery(brokerClient, vin, vehicle) {
       state_class: "measurement",
       unit_of_measurement: "psi",
       icon: "mdi:car-tire-alert",
+      force_update: true,
       state_topic: `acura-ev/${vin}/tire_pressure/state`,
       value_template: `{{ value_json.${tp.slug} | round(1) }}`,
       json_attributes_topic: `acura-ev/${vin}/tire_pressure/state`,
