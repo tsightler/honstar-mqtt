@@ -44,7 +44,7 @@ if [ "$ADDON_MODE" = true ]; then
     fi
 
     # Validate required fields
-    if [ -z "$EMAIL" ] || [ -z "$PASSWORD" ]; then
+    if [ -z "$HWS_EMAIL" ] || [ -z "$HWS_PASSWORD" ]; then
         echo "[init] ERROR: email and password are required"
         exit 1
     fi
