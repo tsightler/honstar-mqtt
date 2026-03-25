@@ -1,6 +1,6 @@
 #!/command/with-contenv bashio
 # ==============================================================================
-# Honstar MQTT - Service run script
+# HOnStar MQTT - Service run script
 # Supports both Home Assistant addon and standalone Docker modes
 # ==============================================================================
 
@@ -12,7 +12,7 @@ if curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer ${SUPERVISOR
 fi
 
 echo "============================================"
-echo " Honstar MQTT Gateway"
+echo " HOnStar MQTT Gateway"
 echo "============================================"
 echo " Mode: $([ "$ADDON_MODE" = true ] && echo "Home Assistant Addon" || echo "Standalone Docker")"
 echo " Node: $(node --version)"
@@ -23,9 +23,9 @@ if [ "$ADDON_MODE" = true ]; then
     echo "[init] Loading configuration from Home Assistant..."
 
     # Read addon options
-    EMAIL=$(bashio::config 'email')
-    PASSWORD=$(bashio::config 'password')
-    PIN=$(bashio::config 'pin')
+    HWS_EMAIL=$(bashio::config 'hws_email')
+    HWS_PASSWORD=$(bashio::config 'hws_password')
+    HWS_PIN=$(bashio::config 'hws_pin')
     VIN=$(bashio::config 'vin')
     MQTT_URL=$(bashio::config 'mqtt_url')
     POLL_INTERVAL=$(bashio::config 'poll_interval')
@@ -50,9 +50,9 @@ if [ "$ADDON_MODE" = true ]; then
     fi
 
     # Export as environment variables for the Node.js app
-    export USERNAME="$EMAIL"
-    export PASSWORD="$PASSWORD"
-    export PIN="$PIN"
+    export HWS_USERNAME="$HWS_EMAIL"
+    export HWS_PASSWORD="$HWS_PASSWORD"
+    export HWS_PIN="$HWS_PIN"
     export VIN="$VIN"
     export MQTT_URL="$MQTT_URL"
     export POLL_INTERVAL="$POLL_INTERVAL"
@@ -63,8 +63,8 @@ else
     echo "[init] Using environment variables for configuration..."
 
     # Validate required environment variables
-    if [ -z "$USERNAME" ]; then
-        echo "[init] ERROR: USERNAME environment variable is required"
+    if [ -z "$HWS_USERNAME" ]; then
+        echo "[init] ERROR: HWS_USERNAME environment variable is required"
         exit 1
     fi
 

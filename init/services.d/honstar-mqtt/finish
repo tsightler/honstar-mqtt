@@ -1,6 +1,6 @@
 #!/command/execlineb -S1
 # ==============================================================================
-# Honstar MQTT - Service finish script
+# HOnStar MQTT - Service finish script
 # Halt container on critical errors
 # See: https://github.com/just-containers/s6-overlay#customizing-s6-behaviour
 # ==============================================================================
