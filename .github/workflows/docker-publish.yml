@@ -8,7 +8,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository_owner }}/acura-ev-mqtt
+  IMAGE_NAME: ${{ github.repository_owner }}/honstar-mqtt
 
 jobs:
   build:

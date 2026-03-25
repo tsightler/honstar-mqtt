@@ -1,8 +1,9 @@
-# Acura EV MQTT Gateway
+# HonStar MQTT Gateway
 
-A Node.js application that bridges Acura EV connected vehicle data to MQTT, with Home Assistant auto-discovery support. Polls vehicle status (battery, range, tire pressures, charging, odometer) and publishes to MQTT topics. Supports setting target charge level and climate preconditioning via MQTT commands.
+HonStar-MQTT is a small Node.js application that bridges connected vehicle data from Honda/Acura EVs based on the General Motors BEV3 platform (Honda Prolouge/Acura ZDX) to MQTT.  These vehicles use a Honda Web Services layer over the top of more traditional GM Onstar service, thus the "Honstar" name.  It will use HWS API to poll for vehicle status (battery, range, tire pressures, charging, odometer) and publish this day to simple MQTT topics while also supporting MQTT commands to set the target charge level and to start/stop climate preconditioning.
 
-Built by reverse-engineering the Acura EV Android app's API flow.
+The application has full support for Home Assistant MQTT discovery, and can run as a Home Assistant App (previously called addons) making it easy to get this data into Home Assistant and, from there, use automations for schedules or the export the capabilities to other automation platforms such as Amazon Alexa, Google Home, or Apple Homekit.
+
 
 ## Features
 
@@ -13,7 +14,7 @@ Built by reverse-engineering the Acura EV Android app's API flow.
 - Set target charge level (50-100%)
 - Climate preconditioning start/stop with temperature control
 - Home Assistant MQTT discovery (auto-creates entities)
-- Configurable poll interval
+- Configurable poll interval (900 seconds minimum)
 
 ## Installation
 
@@ -23,14 +24,14 @@ Built by reverse-engineering the Acura EV Android app's API flow.
 2. Click the **three-dot menu** (top right) and select **Repositories**
 3. Add this repository URL:
    ```
-   https://github.com/tsightler/acura-ev
+   https://github.com/tsightler/honstar-mqtt
    ```
-4. Find **Acura EV MQTT** in the add-on store and click **Install**
+4. Find **HonStar MQTT** in the add-on store and click **Install**
 5. Go to the addon **Configuration** tab and fill in your settings:
-   - **acura_email** — Your Acura EV account email
-   - **acura_password** — Your Acura EV account password
-   - **acura_pin** — Your Acura EV account PIN (required for climate preconditioning)
-   - **acura_vin** — Your vehicle's VIN (optional, defaults to first vehicle)
+   - **email** — Your Honda/Acura account email
+   - **password** — Your Honda/Acura account password
+   - **pin** — Your account PIN (required for climate preconditioning)
+   - **vin** — Your vehicle's VIN (optional, defaults to first vehicle)
    - **mqtt_url** — MQTT broker URL (leave default to auto-discover from the Mosquitto addon)
    - **poll_interval** — Seconds between vehicle polls (minimum/default: 900)
    - **debug** — Enable debug logging (default: false)
@@ -42,16 +43,16 @@ The addon will automatically connect to your MQTT broker and create Home Assista
 
 ```bash
 docker run -d \
-  --name acura-ev-mqtt \
+  --name honstar-mqtt \
   --restart unless-stopped \
-  -e ACURA_USERNAME="your@email.com" \
-  -e ACURA_PASSWORD="yourpassword" \
-  -e ACURA_PIN="1234" \
-  -e ACURA_VIN="YOUR_VIN" \
+  -e USERNAME="your@email.com" \
+  -e PASSWORD="yourpassword" \
+  -e PIN="1234" \
+  -e VIN="YOUR_VIN" \
   -e MQTT_URL="mqtt://user:password@mqtt-broker:1883" \
   -e POLL_INTERVAL=900 \
   -e DEBUG=false \
-  ghcr.io/tsightler/acura-ev-mqtt-amd64
+  ghcr.io/tsightler/honstar-mqtt-amd64
 ```
 
 Replace `amd64` with your architecture (`aarch64`, `armv7`, `armhf`) if needed.
@@ -60,15 +61,15 @@ Replace `amd64` with your architecture (`aarch64`, `armv7`, `armhf`) if needed.
 
 ```yaml
 services:
-  acura-ev-mqtt:
-    image: ghcr.io/tsightler/acura-ev-mqtt-amd64
-    container_name: acura-ev-mqtt
+  honstar-mqtt:
+    image: ghcr.io/tsightler/honstar-mqtt-amd64
+    container_name: honstar-mqtt
     restart: unless-stopped
     environment:
-      - ACURA_USERNAME=your@email.com
-      - ACURA_PASSWORD=yourpassword
-      - ACURA_PIN=1234
-      - ACURA_VIN=YOUR_VIN
+      - USERNAME=your@email.com
+      - PASSWORD=yourpassword
+      - PIN=1234
+      - VIN=YOUR_VIN
       - MQTT_URL=mqtt://user:password@mqtt-broker:1883
       - POLL_INTERVAL=900
       - DEBUG=false
@@ -89,10 +90,10 @@ node index.js <email> <password> [vin]
 #### Environment Variables
 
 ```bash
-export ACURA_USERNAME="your@email.com"
-export ACURA_PASSWORD="yourpassword"
-export ACURA_PIN="1234"
-export ACURA_VIN="YOUR_VIN"
+export USERNAME="your@email.com"
+export PASSWORD="yourpassword"
+export PIN="1234"
+export VIN="YOUR_VIN"
 export MQTT_URL="mqtt://user:password@localhost:1883"
 export POLL_INTERVAL=900
 
@@ -103,10 +104,10 @@ node index.js
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `ACURA_USERNAME` | Yes | Acura EV account email |
-| `ACURA_PASSWORD` | Yes | Acura EV account password |
-| `ACURA_PIN` | No | Account PIN (required for climate preconditioning) |
-| `ACURA_VIN` | No | Vehicle VIN (defaults to first vehicle on account) |
+| `USERNAME` | Yes | Honda/Acura account email |
+| `PASSWORD` | Yes | Honda/Acura account password |
+| `PIN` | No | Account PIN (required for climate preconditioning) |
+| `VIN` | No | Vehicle VIN (defaults to first vehicle on account) |
 | `MQTT_URL` | Yes | MQTT broker URL (e.g. `mqtt://user:pass@host:1883`) |
 | `POLL_INTERVAL` | No | Seconds between polls (minimum/default: 900) |
 | `DEBUG` | No | Enable debug logging (default: false) |
@@ -129,7 +130,7 @@ Once running, the following entities are automatically created via MQTT discover
 
 ## How It Works
 
-The app follows the same authentication and data flow as the official Acura EV app:
+The app follows the same authentication and data flow as the official Honda/Acura EV app:
 
 ```
 1. Register Client       → identity.services.honda.com  → client_reg_key
@@ -148,13 +149,13 @@ Vehicle data is delivered asynchronously — the REST API triggers a request to 
 
 - The vehicle must have cellular connectivity to respond to dashboard requests.
 - Climate preconditioning auto-turns off after 60 minutes (vehicle limitation).
-- The BEV3 telematics platform is used by Acura ZDX and similar GM-platform vehicles.
+- The BEV3 telematics platform is used by Acura ZDX, Honda Prologue, and similar GM-platform vehicles.
 - Access tokens are long-lived (~180 days) but the CIG JWT expires in ~30 minutes.
 - Requires Node.js 18+.
 
 ## Security Notice
 
-This application requires your Acura account credentials. Keep them secure and never commit them to version control. Use environment variables or the Home Assistant addon configuration (which stores them encrypted).
+This application requires your Honda/Acura account credentials. Keep them secure and never commit them to version control. Use environment variables or the Home Assistant addon configuration (which stores them encrypted).
 
 ## License
 

@@ -10,7 +10,7 @@ const TIRE_POSITIONS = {
 function buildDeviceInfo(vin, vehicle) {
   return {
     identifiers: [vin],
-    manufacturer: vehicle?.DivisionName || "Acura",
+    manufacturer: vehicle?.DivisionName || "Honda/Acura",
     model: [vehicle?.ModelYear, vehicle?.DivisionName, vehicle?.ModelCode]
       .filter(Boolean)
       .join(" "),
@@ -22,7 +22,7 @@ function buildDeviceInfo(vin, vehicle) {
 
 function publishDiscovery(brokerClient, vin, vehicle) {
   const device = buildDeviceInfo(vin, vehicle);
-  const availTopic = `acura-ev/${vin}/available`;
+  const availTopic = `honstar-mqtt/${vin}/available`;
   const opts = { retain: true, qos: 1 };
 
   function pub(component, slug, config) {
@@ -48,7 +48,7 @@ function publishDiscovery(brokerClient, vin, vehicle) {
     unit_of_measurement: "%",
     icon: "mdi:battery-high",
     force_update: true,
-    state_topic: `acura-ev/${vin}/ev_battery_level/state`,
+    state_topic: `honstar-mqtt/${vin}/ev_battery_level/state`,
   });
 
   pub("sensor", "ev_range", {
@@ -57,7 +57,7 @@ function publishDiscovery(brokerClient, vin, vehicle) {
     unit_of_measurement: "mi",
     icon: "mdi:ev-station",
     force_update: true,
-    state_topic: `acura-ev/${vin}/ev_range/state`,
+    state_topic: `honstar-mqtt/${vin}/ev_range/state`,
   });
 
   pub("sensor", "odometer", {
@@ -66,7 +66,7 @@ function publishDiscovery(brokerClient, vin, vehicle) {
     unit_of_measurement: "mi",
     icon: "mdi:counter",
     force_update: true,
-    state_topic: `acura-ev/${vin}/odometer/state`,
+    state_topic: `honstar-mqtt/${vin}/odometer/state`,
   });
 
   // Remove old sensor entity (was changed to number)
@@ -80,8 +80,8 @@ function publishDiscovery(brokerClient, vin, vehicle) {
   pub("number", "ev_target_charge_level", {
     name: "EV Target Charge Level",
     icon: "mdi:battery-charging-high",
-    state_topic: `acura-ev/${vin}/ev_target_charge_level/state`,
-    command_topic: `acura-ev/${vin}/ev_target_charge_level/set`,
+    state_topic: `honstar-mqtt/${vin}/ev_target_charge_level/state`,
+    command_topic: `honstar-mqtt/${vin}/ev_target_charge_level/set`,
     min: 50,
     max: 100,
     step: 5,
@@ -93,16 +93,16 @@ function publishDiscovery(brokerClient, vin, vehicle) {
   pub("switch", "ev_climate", {
     name: "Climate Preconditioning",
     icon: "mdi:air-conditioner",
-    state_topic: `acura-ev/${vin}/ev_climate/state`,
-    command_topic: `acura-ev/${vin}/ev_climate/set`,
+    state_topic: `honstar-mqtt/${vin}/ev_climate/state`,
+    command_topic: `honstar-mqtt/${vin}/ev_climate/set`,
   });
 
   // Climate preconditioning temperature
   pub("number", "ev_climate_temperature", {
     name: "Climate Temperature",
     icon: "mdi:thermometer",
-    state_topic: `acura-ev/${vin}/ev_climate_temperature/state`,
-    command_topic: `acura-ev/${vin}/ev_climate_temperature/set`,
+    state_topic: `honstar-mqtt/${vin}/ev_climate_temperature/state`,
+    command_topic: `honstar-mqtt/${vin}/ev_climate_temperature/set`,
     min: 60,
     max: 90,
     step: 1,
@@ -118,9 +118,9 @@ function publishDiscovery(brokerClient, vin, vehicle) {
       unit_of_measurement: "psi",
       icon: "mdi:car-tire-alert",
       force_update: true,
-      state_topic: `acura-ev/${vin}/tire_pressure/state`,
+      state_topic: `honstar-mqtt/${vin}/tire_pressure/state`,
       value_template: `{{ value_json.${tp.slug} | round(1) }}`,
-      json_attributes_topic: `acura-ev/${vin}/tire_pressure/state`,
+      json_attributes_topic: `honstar-mqtt/${vin}/tire_pressure/state`,
       json_attributes_template: `{{ {'warning': value_json.${tp.slug}_warning, 'recommendation': value_json.${tp.slug}_placard} | tojson }}`,
     });
   }
@@ -133,7 +133,7 @@ function publishDiscovery(brokerClient, vin, vehicle) {
     icon: "mdi:battery-charging",
     payload_on: "ON",
     payload_off: "OFF",
-    state_topic: `acura-ev/${vin}/ev_charge_state/state`,
+    state_topic: `honstar-mqtt/${vin}/ev_charge_state/state`,
   });
 
   pub("binary_sensor", "ev_plug_state", {
@@ -142,7 +142,7 @@ function publishDiscovery(brokerClient, vin, vehicle) {
     icon: "mdi:ev-plug-type1",
     payload_on: "ON",
     payload_off: "OFF",
-    state_topic: `acura-ev/${vin}/ev_plug_state/state`,
+    state_topic: `honstar-mqtt/${vin}/ev_plug_state/state`,
   });
 
   log("Published HA MQTT discovery configs");
@@ -150,7 +150,7 @@ function publishDiscovery(brokerClient, vin, vehicle) {
 
 function publishAvailability(brokerClient, vin, available) {
   brokerClient.publish(
-    `acura-ev/${vin}/available`,
+    `honstar-mqtt/${vin}/available`,
     available ? "true" : "false",
     { retain: true, qos: 1 }
   );
@@ -161,7 +161,7 @@ function publishStates(brokerClient, vin, dashboard) {
 
   if (dashboard.battery?.stateOfCharge != null) {
     brokerClient.publish(
-      `acura-ev/${vin}/ev_battery_level/state`,
+      `honstar-mqtt/${vin}/ev_battery_level/state`,
       String(Math.round(dashboard.battery.stateOfCharge)),
       opts
     );
@@ -169,7 +169,7 @@ function publishStates(brokerClient, vin, dashboard) {
 
   if (dashboard.battery?.range != null) {
     brokerClient.publish(
-      `acura-ev/${vin}/ev_range/state`,
+      `honstar-mqtt/${vin}/ev_range/state`,
       String(Math.round(dashboard.battery.range)),
       opts
     );
@@ -177,7 +177,7 @@ function publishStates(brokerClient, vin, dashboard) {
 
   if (dashboard.odometer?.value != null) {
     brokerClient.publish(
-      `acura-ev/${vin}/odometer/state`,
+      `honstar-mqtt/${vin}/odometer/state`,
       String(Math.round(dashboard.odometer.value)),
       opts
     );
@@ -185,7 +185,7 @@ function publishStates(brokerClient, vin, dashboard) {
 
   if (dashboard.chargeSettings?.targetLevel != null) {
     brokerClient.publish(
-      `acura-ev/${vin}/ev_target_charge_level/state`,
+      `honstar-mqtt/${vin}/ev_target_charge_level/state`,
       String(dashboard.chargeSettings.targetLevel),
       opts
     );
@@ -200,7 +200,7 @@ function publishStates(brokerClient, vin, dashboard) {
       raw === "connected_charging" ||
       raw === "CONNECTION_CHARGING";
     brokerClient.publish(
-      `acura-ev/${vin}/ev_charge_state/state`,
+      `honstar-mqtt/${vin}/ev_charge_state/state`,
       charging ? "ON" : "OFF",
       opts
     );
@@ -214,7 +214,7 @@ function publishStates(brokerClient, vin, dashboard) {
       raw === "CONNECTED" ||
       raw === "connected";
     brokerClient.publish(
-      `acura-ev/${vin}/ev_plug_state/state`,
+      `honstar-mqtt/${vin}/ev_plug_state/state`,
       plugged ? "ON" : "OFF",
       opts
     );
@@ -234,7 +234,7 @@ function publishStates(brokerClient, vin, dashboard) {
       }
     }
     brokerClient.publish(
-      `acura-ev/${vin}/tire_pressure/state`,
+      `honstar-mqtt/${vin}/tire_pressure/state`,
       JSON.stringify(tireState),
       opts
     );

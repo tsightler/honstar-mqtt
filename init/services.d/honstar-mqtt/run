@@ -1,6 +1,6 @@
 #!/command/with-contenv bashio
 # ==============================================================================
-# Acura EV MQTT - Service run script
+# Honstar MQTT - Service run script
 # Supports both Home Assistant addon and standalone Docker modes
 # ==============================================================================
 
@@ -12,7 +12,7 @@ if curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer ${SUPERVISOR
 fi
 
 echo "============================================"
-echo " Acura EV MQTT Gateway"
+echo " Honstar MQTT Gateway"
 echo "============================================"
 echo " Mode: $([ "$ADDON_MODE" = true ] && echo "Home Assistant Addon" || echo "Standalone Docker")"
 echo " Node: $(node --version)"
@@ -23,10 +23,10 @@ if [ "$ADDON_MODE" = true ]; then
     echo "[init] Loading configuration from Home Assistant..."
 
     # Read addon options
-    ACURA_EMAIL=$(bashio::config 'acura_email')
-    ACURA_PASSWORD=$(bashio::config 'acura_password')
-    ACURA_PIN=$(bashio::config 'acura_pin')
-    ACURA_VIN=$(bashio::config 'acura_vin')
+    EMAIL=$(bashio::config 'email')
+    PASSWORD=$(bashio::config 'password')
+    PIN=$(bashio::config 'pin')
+    VIN=$(bashio::config 'vin')
     MQTT_URL=$(bashio::config 'mqtt_url')
     POLL_INTERVAL=$(bashio::config 'poll_interval')
     DEBUG_MODE=$(bashio::config 'debug')
@@ -44,16 +44,16 @@ if [ "$ADDON_MODE" = true ]; then
     fi
 
     # Validate required fields
-    if [ -z "$ACURA_EMAIL" ] || [ -z "$ACURA_PASSWORD" ]; then
-        echo "[init] ERROR: acura_email and acura_password are required"
+    if [ -z "$EMAIL" ] || [ -z "$PASSWORD" ]; then
+        echo "[init] ERROR: email and password are required"
         exit 1
     fi
 
     # Export as environment variables for the Node.js app
-    export ACURA_USERNAME="$ACURA_EMAIL"
-    export ACURA_PASSWORD="$ACURA_PASSWORD"
-    export ACURA_PIN="$ACURA_PIN"
-    export ACURA_VIN="$ACURA_VIN"
+    export USERNAME="$EMAIL"
+    export PASSWORD="$PASSWORD"
+    export PIN="$PIN"
+    export VIN="$VIN"
     export MQTT_URL="$MQTT_URL"
     export POLL_INTERVAL="$POLL_INTERVAL"
     export DEBUG="$DEBUG_MODE"
@@ -63,13 +63,13 @@ else
     echo "[init] Using environment variables for configuration..."
 
     # Validate required environment variables
-    if [ -z "$ACURA_USERNAME" ]; then
-        echo "[init] ERROR: ACURA_USERNAME environment variable is required"
+    if [ -z "$USERNAME" ]; then
+        echo "[init] ERROR: USERNAME environment variable is required"
         exit 1
     fi
 
-    if [ -z "$ACURA_PASSWORD" ]; then
-        echo "[init] ERROR: ACURA_PASSWORD environment variable is required"
+    if [ -z "$PASSWORD" ]; then
+        echo "[init] ERROR: PASSWORD environment variable is required"
         exit 1
     fi
 
@@ -79,7 +79,7 @@ else
     fi
 fi
 
-echo "[init] Starting Acura EV MQTT Gateway..."
+echo "[init] Starting Honstar MQTT Gateway..."
 
 # Run the application
 cd /app

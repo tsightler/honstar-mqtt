@@ -1,11 +1,11 @@
-name: Acura EV MQTT
+name: Honstar MQTT
 version: "1.2.6"
-slug: acura-ev-mqtt
+slug: honstar-mqtt
 description: >-
-  Bridges Acura EV connected vehicle data to MQTT.
+  Bridges Honda/Acura EV connected vehicle data to MQTT.
   Polls vehicle status (battery, range, tires, charging, odometer)
   and publishes to MQTT topics.
-url: https://github.com/tsightler/acura-ev
+url: https://github.com/tsightler/honstar-mqtt
 arch:
   - amd64
   - aarch64
@@ -16,20 +16,20 @@ boot: auto
 services:
   - mqtt:need
 options:
-  acura_email: ""
-  acura_password: ""
-  acura_pin: ""
-  acura_vin: ""
+  email: ""
+  password: ""
+  pin: ""
+  vin: ""
   mqtt_url: "mqtt://auto_username:auto_password@auto_hostname"
   poll_interval: 900
   debug: false
 schema:
-  acura_email: email
-  acura_password: password
-  acura_pin: str?
-  acura_vin: str?
+  email: email
+  password: password
+  pin: str?
+  vin: str?
   mqtt_url: str?
   poll_interval: int?
   debug: bool?
-image: ghcr.io/tsightler/acura-ev-mqtt-{arch}
+image: ghcr.io/tsightler/honstar-mqtt-{arch}
 init: false

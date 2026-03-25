@@ -7,7 +7,7 @@ function connectBroker(mqttUrl) {
     debug(`Broker URL: ${mqttUrl.replace(/\/\/.*@/, "//***@")}`);
 
     const client = mqtt.connect(mqttUrl, {
-      clientId: `acura-ev-${Date.now()}`,
+      clientId: `honstar-mqtt-${Date.now()}`,
       clean: true,
       keepalive: 60,
       reconnectPeriod: 5000,
@@ -41,7 +41,7 @@ function connectBroker(mqttUrl) {
 }
 
 function publishData(brokerClient, vin, dashboard) {
-  const topic = `acura-ev/${vin}/data`;
+  const topic = `honstar-mqtt/${vin}/data`;
   const payload = JSON.stringify(dashboard);
   brokerClient.publish(topic, payload, { retain: true, qos: 1 }, (err) => {
     if (err) {

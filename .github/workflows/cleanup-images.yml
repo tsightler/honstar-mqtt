@@ -15,7 +15,7 @@ jobs:
       - name: Delete old images
         uses: snok/container-retention-policy@v2
         with:
-          image-names: acura-ev-mqtt*
+          image-names: honstar-mqtt*
           cut-off: One week ago UTC
           keep-at-least: 3
           untagged-only: false

@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 
 /**
- * Acura EV Connect - MQTT Gateway
+ * Honstar MQTT Gateway
  *
- * Authenticates to the Acura EV connected vehicle services,
+ * Authenticates to Honda/Acura EV connected vehicle services,
  * polls vehicle dashboard status on a configurable interval,
  * and publishes the data to an MQTT broker.
  *
@@ -103,34 +103,34 @@ async function pollOnce(accessToken, hidasIdent, vin) {
 // ─── Main ────────────────────────────────────────────────────────────────────
 
 async function main() {
-  const username = process.env.ACURA_USERNAME || process.argv[2];
-  const password = process.env.ACURA_PASSWORD || process.argv[3];
-  const targetVin = process.env.ACURA_VIN || process.argv[4];
+  const username = process.env.USERNAME || process.argv[2];
+  const password = process.env.PASSWORD || process.argv[3];
+  const targetVin = process.env.VIN || process.argv[4];
   const mqttUrl = process.env.MQTT_URL;
-  const pin = process.env.ACURA_PIN || null;
+  const pin = process.env.PIN || null;
   const pollInterval = Math.max(parseInt(process.env.POLL_INTERVAL, 10) || 900, 900);
 
   if (!username || !password) {
     console.log(`
-Acura EV Connect - MQTT Gateway
+Honstar MQTT Gateway
 
 Usage:
   node index.js <email> <password> [vin]
 
 Environment variables:
-  ACURA_USERNAME   Acura account email (required)
-  ACURA_PASSWORD   Acura account password (required)
-  ACURA_VIN        Vehicle VIN (optional, uses first vehicle)
+  USERNAME         Account email (required)
+  PASSWORD         Account password (required)
+  VIN              Vehicle VIN (optional, uses first vehicle)
   MQTT_URL         MQTT broker URL (required)
                    e.g. mqtt://user:pass@192.168.1.100:1883
-  ACURA_PIN        Vehicle PIN for climate commands (optional)
+  PIN              Vehicle PIN for climate commands (optional)
   POLL_INTERVAL    Seconds between polls (minimum/default: 900 = 15 min)
   DEBUG            Enable debug logging (true/false, default: false)
 
 Docker:
-  docker run -e ACURA_USERNAME=... -e ACURA_PASSWORD=... \\
+  docker run -e USERNAME=... -e PASSWORD=... \\
              -e MQTT_URL=mqtt://user:pass@host:1883 \\
-             acura-ev-mqtt
+             honstar-mqtt
 `);
     process.exit(1);
   }
@@ -140,7 +140,7 @@ Docker:
     process.exit(1);
   }
 
-  log("Acura EV Connect - MQTT Gateway starting...");
+  log("Honstar MQTT Gateway starting...");
   log(`Poll interval: ${pollInterval}s`);
 
   // State
@@ -173,7 +173,7 @@ Docker:
     if (brokerClient) {
       if (vin) {
         publishAvailability(brokerClient, vin, false);
-        brokerClient.publish(`acura-ev/${vin}/status`, "offline", {
+        brokerClient.publish(`honstar-mqtt/${vin}/status`, "offline", {
           retain: true,
           qos: 1,
         });
@@ -233,7 +233,7 @@ Docker:
                 `Dashboard shows ${dashLevel}%, keeping optimistic value ${optimisticTargetLevel}%`
               );
               brokerClient.publish(
-                `acura-ev/${vin}/ev_target_charge_level/state`,
+                `honstar-mqtt/${vin}/ev_target_charge_level/state`,
                 String(optimisticTargetLevel),
                 { retain: true, qos: 1 }
               );
@@ -251,7 +251,7 @@ Docker:
           }
         }
 
-        brokerClient.publish(`acura-ev/${vin}/status`, "online", {
+        brokerClient.publish(`honstar-mqtt/${vin}/status`, "online", {
           retain: true,
           qos: 1,
         });
@@ -288,15 +288,15 @@ Docker:
     publishDiscovery(brokerClient, vin, vehicle);
     publishAvailability(brokerClient, vin, true);
 
-    brokerClient.publish(`acura-ev/${vin}/status`, "online", {
+    brokerClient.publish(`honstar-mqtt/${vin}/status`, "online", {
       retain: true,
       qos: 1,
     });
 
     // Subscribe to command topics
-    const setChargeTopic = `acura-ev/${vin}/ev_target_charge_level/set`;
-    const climateModeTopic = `acura-ev/${vin}/ev_climate/set`;
-    const climateTempTopic = `acura-ev/${vin}/ev_climate_temperature/set`;
+    const setChargeTopic = `honstar-mqtt/${vin}/ev_target_charge_level/set`;
+    const climateModeTopic = `honstar-mqtt/${vin}/ev_climate/set`;
+    const climateTempTopic = `honstar-mqtt/${vin}/ev_climate_temperature/set`;
 
     const commandTopics = [setChargeTopic, climateModeTopic, climateTempTopic];
     brokerClient.subscribe(commandTopics, { qos: 1 }, (err) => {
@@ -310,12 +310,12 @@ Docker:
     // Publish initial climate state
     const mqttOpts = { retain: true, qos: 1 };
     brokerClient.publish(
-      `acura-ev/${vin}/ev_climate/state`,
+      `honstar-mqtt/${vin}/ev_climate/state`,
       climateMode === "auto" ? "ON" : "OFF",
       mqttOpts
     );
     brokerClient.publish(
-      `acura-ev/${vin}/ev_climate_temperature/state`,
+      `honstar-mqtt/${vin}/ev_climate_temperature/state`,
       String(climateTemp),
       mqttOpts
     );
@@ -332,7 +332,7 @@ Docker:
         }
         climateTemp = temp;
         brokerClient.publish(
-          `acura-ev/${vin}/ev_climate_temperature/state`,
+          `honstar-mqtt/${vin}/ev_climate_temperature/state`,
           String(climateTemp),
           mqttOpts
         );
@@ -349,7 +349,7 @@ Docker:
         }
 
         if (!pin) {
-          log("Cannot control climate: ACURA_PIN not configured");
+          log("Cannot control climate: PIN not configured");
           return;
         }
 
@@ -357,7 +357,7 @@ Docker:
           pendingClimateCmd = cmd;
           log(`Operation in progress, queued climate ${cmd}`);
           brokerClient.publish(
-            `acura-ev/${vin}/ev_climate/state`,
+            `honstar-mqtt/${vin}/ev_climate/state`,
             cmd,
             mqttOpts
           );
@@ -386,7 +386,7 @@ Docker:
         );
         // Optimistically update the display even while queued
         brokerClient.publish(
-          `acura-ev/${vin}/ev_target_charge_level/state`,
+          `honstar-mqtt/${vin}/ev_target_charge_level/state`,
           String(value),
           mqttOpts
         );
@@ -399,7 +399,7 @@ Docker:
     async function executeSetChargeLevel(value) {
       busy = true;
       pendingChargeLevel = null;
-      const stateTopic = `acura-ev/${vin}/ev_target_charge_level/state`;
+      const stateTopic = `honstar-mqtt/${vin}/ev_target_charge_level/state`;
 
       // Optimistically publish the desired value immediately
       brokerClient.publish(stateTopic, String(value), mqttOpts);
@@ -461,7 +461,7 @@ Docker:
     async function executeClimateCmd(cmd) {
       busy = true;
       pendingClimateCmd = null;
-      const climateStateTopic = `acura-ev/${vin}/ev_climate/state`;
+      const climateStateTopic = `honstar-mqtt/${vin}/ev_climate/state`;
       const previousMode = climateMode;
 
       // Optimistically publish the desired state immediately
