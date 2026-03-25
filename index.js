@@ -103,8 +103,8 @@ async function pollOnce(accessToken, hidasIdent, vin) {
 // ─── Main ────────────────────────────────────────────────────────────────────
 
 async function main() {
-  const username = process.env.USERNAME || process.argv[2];
-  const password = process.env.PASSWORD || process.argv[3];
+  const username = process.env.HWS_USERNAME || process.argv[2];
+  const password = process.env.HWS_PASSWORD || process.argv[3];
   const targetVin = process.env.VIN || process.argv[4];
   const mqttUrl = process.env.MQTT_URL;
   const pin = process.env.PIN || null;
@@ -118,17 +118,16 @@ Usage:
   node index.js <email> <password> [vin]
 
 Environment variables:
-  USERNAME         Account email (required)
-  PASSWORD         Account password (required)
-  VIN              Vehicle VIN (optional, uses first vehicle)
+  HWS USERNAME         Honda Web Services email (required)
+  PASSWORD         Honda Web Services password (required)
+  HWS PIN              Vehicle PIN for climate commands (optional)
   MQTT_URL         MQTT broker URL (required)
                    e.g. mqtt://user:pass@192.168.1.100:1883
-  PIN              Vehicle PIN for climate commands (optional)
   POLL_INTERVAL    Seconds between polls (minimum/default: 900 = 15 min)
   DEBUG            Enable debug logging (true/false, default: false)
 
 Docker:
-  docker run -e USERNAME=... -e PASSWORD=... \\
+  docker run -e HWS_USERNAME=... -e HWS_PASSWORD=... \\
              -e MQTT_URL=mqtt://user:pass@host:1883 \\
              honstar-mqtt
 `);
@@ -140,7 +139,7 @@ Docker:
     process.exit(1);
   }
 
-  log("Honstar MQTT Gateway starting...");
+  log("HOnStar MQTT Gateway starting...");
   log(`Poll interval: ${pollInterval}s`);
 
   // State

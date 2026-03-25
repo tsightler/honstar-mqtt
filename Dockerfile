@@ -66,12 +66,12 @@ RUN find /etc/services.d/ -type f -exec sed -i 's/\r$//' {} + \
 
 # Labels
 LABEL \
-    io.hass.name="Honstar MQTT" \
-    io.hass.description="Honda/Acura EV vehicle data to MQTT bridge" \
+    io.hass.name="HOnStar MQTT" \
+    io.hass.description="MQTT Bridge for Honda/Acura EVs based on the GM BEV3 platform" \
     io.hass.type="addon" \
-    io.hass.version="1.0.2" \
-    org.opencontainers.image.title="Honstar MQTT" \
-    org.opencontainers.image.description="Bridges Honda/Acura EV vehicle data to MQTT" \
+    io.hass.version="1.3.0" \
+    org.opencontainers.image.title="HOnStar MQTT" \
+    org.opencontainers.image.description="MQTT Bridge for Honda/Acura EVs based on the GM BEV3 platform" \
     org.opencontainers.image.source="https://github.com/tsightler/honstar-mqtt" \
     org.opencontainers.image.licenses="MIT"
 
