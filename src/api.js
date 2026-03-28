@@ -361,6 +361,130 @@ async function requestStopClimate(accessToken, vin, pin, temperature) {
   throw new Error(`Climate stop failed (HTTP ${resp.status}): ${errMsg}`);
 }
 
+async function requestLockDoors(accessToken, vin, pin) {
+  log("Requesting door lock...");
+
+  const resp = await fetch(`${CONFIG.wscHost}/REST/NGT/CIG/lk/async/alk`, {
+    method: "POST",
+    headers: {
+      ...CONFIG.commonHeaders,
+      "Content-Type": "application/json",
+      Accept: "application/json",
+      Authorization: `Bearer ${accessToken}`,
+      "hondaHeaderType.version": "1.0",
+      "hondaHeaderType.siteId": "18d216af12884813987e6b7f75a005a1",
+      "hondaHeaderType.systemId": "com.honda.hondalink.cv_android",
+      "hondaHeaderType.clientType": "Mobile",
+      "hondaHeaderType.messageId": "S-1",
+      "hondaHeaderType.collectedTimeStamp": new Date().toISOString(),
+    },
+    body: JSON.stringify({
+      delay: { unit: "Minutes", value: 2 },
+      device: vin,
+      pin,
+    }),
+  });
+
+  const data = await resp.json();
+
+  if (resp.status === 400) {
+    const errMsg = data.responseBody?.errorMessage || "Bad request";
+    throw new Error(`Door lock failed: ${errMsg}`);
+  }
+
+  if (resp.ok && (data.status === "IN_PROGRESS" || data.status === "success")) {
+    const reqId = data.responseBody?.cigServiceRequestId;
+    debug(`Door lock request ID: ${reqId}`);
+    return reqId;
+  }
+
+  const errMsg =
+    data.responseBody?.errorMessage || data.status || resp.statusText;
+  throw new Error(`Door lock failed (HTTP ${resp.status}): ${errMsg}`);
+}
+
+async function requestUnlockDoors(accessToken, vin, pin) {
+  log("Requesting door unlock...");
+
+  const resp = await fetch(`${CONFIG.wscHost}/REST/NGT/CIG/lk/async/dulk`, {
+    method: "POST",
+    headers: {
+      ...CONFIG.commonHeaders,
+      "Content-Type": "application/json",
+      Accept: "application/json",
+      Authorization: `Bearer ${accessToken}`,
+      "hondaHeaderType.version": "1.0",
+      "hondaHeaderType.siteId": "18d216af12884813987e6b7f75a005a1",
+      "hondaHeaderType.systemId": "com.honda.hondalink.cv_android",
+      "hondaHeaderType.clientType": "Mobile",
+      "hondaHeaderType.messageId": "S-1",
+      "hondaHeaderType.collectedTimeStamp": new Date().toISOString(),
+    },
+    body: JSON.stringify({
+      device: vin,
+      pin,
+    }),
+  });
+
+  const data = await resp.json();
+
+  if (resp.status === 400) {
+    const errMsg = data.responseBody?.errorMessage || "Bad request";
+    throw new Error(`Door unlock failed: ${errMsg}`);
+  }
+
+  if (resp.ok && (data.status === "IN_PROGRESS" || data.status === "success")) {
+    const reqId = data.responseBody?.cigServiceRequestId;
+    debug(`Door unlock request ID: ${reqId}`);
+    return reqId;
+  }
+
+  const errMsg =
+    data.responseBody?.errorMessage || data.status || resp.statusText;
+  throw new Error(`Door unlock failed (HTTP ${resp.status}): ${errMsg}`);
+}
+
+async function requestLocateVehicle(accessToken, vin, pin) {
+  log("Requesting vehicle location...");
+
+  const resp = await fetch(`${CONFIG.wscHost}/REST/NGT/CIG/cfl/async`, {
+    method: "POST",
+    headers: {
+      ...CONFIG.commonHeaders,
+      "Content-Type": "application/json",
+      Accept: "application/json",
+      Authorization: `Bearer ${accessToken}`,
+      "hondaHeaderType.version": "1.0",
+      "hondaHeaderType.siteId": "18d216af12884813987e6b7f75a005a1",
+      "hondaHeaderType.systemId": "com.honda.hondalink.cv_android",
+      "hondaHeaderType.clientType": "Mobile",
+      "hondaHeaderType.messageId": "S-1",
+      "hondaHeaderType.collectedTimeStamp": new Date().toISOString(),
+    },
+    body: JSON.stringify({
+      device: vin,
+      pin,
+    }),
+  });
+
+  const data = await resp.json();
+
+  if (resp.status === 400) {
+    const errMsg = data.responseBody?.errorMessage || "Bad request";
+    throw new Error(`Locate vehicle failed: ${errMsg}`);
+  }
+
+  if (resp.ok && (data.status === "IN_PROGRESS" || data.status === "success")) {
+    const reqId = data.responseBody?.cigServiceRequestId;
+    debug(`Locate vehicle request ID: ${reqId}`);
+    return reqId;
+  }
+
+  const errMsg =
+    data.responseBody?.errorMessage || data.status || resp.statusText;
+  throw new Error(`Locate vehicle failed (HTTP ${resp.status}): ${errMsg}`);
+}
+
 module.exports = {
   registerClient,
   generateToken,
@@ -370,4 +494,7 @@ module.exports = {
   requestSetTargetChargeLevel,
   requestStartClimate,
   requestStopClimate,
+  requestLockDoors,
+  requestUnlockDoors,
+  requestLocateVehicle,
 };

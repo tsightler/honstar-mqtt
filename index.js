@@ -32,6 +32,9 @@ const {
   setTargetChargeLevel,
   startClimate,
   stopClimate,
+  lockDoors,
+  unlockDoors,
+  locateVehicle,
 } = require("./src/commands");
 
 // ─── Poll Cycle ──────────────────────────────────────────────────────────────
@@ -159,6 +162,9 @@ Docker:
   let climateTemp = 72;
   let climateOffTimer = null;
   let pendingClimateCmd = null;
+  let pendingLockCmd = null;
+  let pendingLocateCmd = null;
+  let lastLocation = null;
 
   // Graceful shutdown
   async function shutdown() {
@@ -296,8 +302,16 @@ Docker:
     const setChargeTopic = `honstar-mqtt/${vin}/ev_target_charge_level/set`;
     const climateModeTopic = `honstar-mqtt/${vin}/ev_climate/set`;
     const climateTempTopic = `honstar-mqtt/${vin}/ev_climate_temperature/set`;
+    const lockTopic = `honstar-mqtt/${vin}/door_lock/set`;
+    const locateTopic = `honstar-mqtt/${vin}/locate/set`;
 
-    const commandTopics = [setChargeTopic, climateModeTopic, climateTempTopic];
+    const commandTopics = [
+      setChargeTopic,
+      climateModeTopic,
+      climateTempTopic,
+      lockTopic,
+      locateTopic,
+    ];
     brokerClient.subscribe(commandTopics, { qos: 1 }, (err) => {
       if (err) {
         log(`Failed to subscribe to command topics: ${err.message}`);
@@ -336,6 +350,57 @@ Docker:
           mqttOpts
         );
         log(`Climate temperature set to ${climateTemp}°F`);
+        return;
+      }
+
+      // ── Door lock/unlock ──
+      if (topic === lockTopic) {
+        const cmd = message.toString().toUpperCase();
+        if (cmd !== "LOCK" && cmd !== "UNLOCK") {
+          log(`Invalid lock command: ${message.toString()}`);
+          return;
+        }
+
+        if (!pin) {
+          log("Cannot control door lock: PIN not configured");
+          return;
+        }
+
+        if (busy) {
+          pendingLockCmd = cmd;
+          log(`Operation in progress, queued door ${cmd.toLowerCase()}`);
+          brokerClient.publish(
+            `honstar-mqtt/${vin}/door_lock/state`,
+            cmd === "LOCK" ? "LOCKED" : "UNLOCKED",
+            mqttOpts
+          );
+          return;
+        }
+
+        await executeLockCmd(cmd);
+        return;
+      }
+
+      // ── Locate vehicle ──
+      if (topic === locateTopic) {
+        const cmd = message.toString().toUpperCase();
+        if (cmd !== "PRESS") {
+          log(`Invalid locate command: ${message.toString()}`);
+          return;
+        }
+
+        if (!pin) {
+          log("Cannot locate vehicle: PIN not configured");
+          return;
+        }
+
+        if (busy) {
+          pendingLocateCmd = cmd;
+          log("Operation in progress, queued locate");
+          return;
+        }
+
+        await executeLocateCmd();
         return;
       }
 
@@ -540,8 +605,134 @@ Docker:
       await processPendingCommands();
     }
 
+    async function executeLockCmd(cmd) {
+      busy = true;
+      pendingLockCmd = null;
+      const lockStateTopic = `honstar-mqtt/${vin}/door_lock/state`;
+
+      // Optimistically publish the desired state
+      brokerClient.publish(
+        lockStateTopic,
+        cmd === "LOCK" ? "LOCKED" : "UNLOCKED",
+        mqttOpts
+      );
+      log(`Optimistically set door lock state to ${cmd}`);
+
+      let awsClient;
+      try {
+        const { cigToken, cigSignature } = await getCigToken(
+          accessToken,
+          hidasIdent,
+          vin
+        );
+        awsClient = await connectAwsMqtt(vin, cigToken, cigSignature);
+
+        if (cmd === "LOCK") {
+          await lockDoors(awsClient, accessToken, vin, pin);
+        } else {
+          await unlockDoors(awsClient, accessToken, vin, pin);
+        }
+      } catch (err) {
+        log(`Door ${cmd.toLowerCase()} command failed: ${err.message}`);
+
+        // Revert to opposite state
+        brokerClient.publish(
+          lockStateTopic,
+          cmd === "LOCK" ? "UNLOCKED" : "LOCKED",
+          mqttOpts
+        );
+
+        if (
+          err.message.includes("401") ||
+          err.message.includes("403") ||
+          err.message.includes("Auth") ||
+          err.message.includes("token")
+        ) {
+          log("Possible auth error, re-authenticating...");
+          try {
+            await authenticate();
+          } catch (authErr) {
+            log(`Re-authentication failed: ${authErr.message}`);
+          }
+        }
+      } finally {
+        if (awsClient) awsClient.end(true);
+        busy = false;
+      }
+
+      await processPendingCommands();
+    }
+
+    async function executeLocateCmd() {
+      busy = true;
+      pendingLocateCmd = null;
+
+      let awsClient;
+      try {
+        const { cigToken, cigSignature } = await getCigToken(
+          accessToken,
+          hidasIdent,
+          vin
+        );
+        awsClient = await connectAwsMqtt(vin, cigToken, cigSignature);
+
+        const result = await locateVehicle(
+          awsClient,
+          accessToken,
+          vin,
+          pin
+        );
+
+        if (result?.gpsData?.coordinate) {
+          const gps = result.gpsData.coordinate;
+          lastLocation = {
+            latitude: gps.latitude,
+            longitude: gps.longitude,
+            timestamp: result.gpsData.dtTime || new Date().toISOString(),
+          };
+          brokerClient.publish(
+            `honstar-mqtt/${vin}/location/state`,
+            JSON.stringify(lastLocation),
+            mqttOpts
+          );
+          log(
+            `Published vehicle location: ${gps.latitude}, ${gps.longitude}`
+          );
+        }
+      } catch (err) {
+        log(`Locate vehicle command failed: ${err.message}`);
+
+        if (
+          err.message.includes("401") ||
+          err.message.includes("403") ||
+          err.message.includes("Auth") ||
+          err.message.includes("token")
+        ) {
+          log("Possible auth error, re-authenticating...");
+          try {
+            await authenticate();
+          } catch (authErr) {
+            log(`Re-authentication failed: ${authErr.message}`);
+          }
+        }
+      } finally {
+        if (awsClient) awsClient.end(true);
+        busy = false;
+      }
+
+      await processPendingCommands();
+    }
+
     async function processPendingCommands() {
-      if (pendingClimateCmd != null) {
+      if (pendingLockCmd != null) {
+        const next = pendingLockCmd;
+        log(`Processing queued door ${next.toLowerCase()}`);
+        await executeLockCmd(next);
+      } else if (pendingLocateCmd != null) {
+        pendingLocateCmd = null;
+        log("Processing queued locate");
+        await executeLocateCmd();
+      } else if (pendingClimateCmd != null) {
         const next = pendingClimateCmd;
         log(`Processing queued climate ${next}`);
         await executeClimateCmd(next);

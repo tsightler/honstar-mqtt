@@ -110,6 +110,49 @@ function publishDiscovery(brokerClient, vin, vehicle) {
     mode: "slider",
   });
 
+  // Door lock
+  pub("lock", "door_lock", {
+    name: "Door Lock",
+    icon: "mdi:car-door-lock",
+    state_topic: `honstar-mqtt/${vin}/door_lock/state`,
+    command_topic: `honstar-mqtt/${vin}/door_lock/set`,
+    state_locked: "LOCKED",
+    state_unlocked: "UNLOCKED",
+    payload_lock: "LOCK",
+    payload_unlock: "UNLOCK",
+  });
+
+  // Locate vehicle button
+  pub("button", "locate", {
+    name: "Locate Vehicle",
+    icon: "mdi:crosshairs-gps",
+    command_topic: `honstar-mqtt/${vin}/locate/set`,
+    payload_press: "PRESS",
+  });
+
+  // Vehicle location sensors
+  pub("sensor", "location_latitude", {
+    name: "Location Latitude",
+    icon: "mdi:latitude",
+    state_topic: `honstar-mqtt/${vin}/location/state`,
+    value_template: "{{ value_json.latitude }}",
+  });
+
+  pub("sensor", "location_longitude", {
+    name: "Location Longitude",
+    icon: "mdi:longitude",
+    state_topic: `honstar-mqtt/${vin}/location/state`,
+    value_template: "{{ value_json.longitude }}",
+  });
+
+  pub("sensor", "location_timestamp", {
+    name: "Location Timestamp",
+    device_class: "timestamp",
+    icon: "mdi:clock-outline",
+    state_topic: `honstar-mqtt/${vin}/location/state`,
+    value_template: "{{ value_json.timestamp }}",
+  });
+
   // Tire pressures (4 sensors)
   for (const [, tp] of Object.entries(TIRE_POSITIONS)) {
     pub("sensor", tp.slug, {

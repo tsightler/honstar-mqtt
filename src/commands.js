@@ -3,6 +3,9 @@ const {
   requestSetTargetChargeLevel,
   requestStartClimate,
   requestStopClimate,
+  requestLockDoors,
+  requestUnlockDoors,
+  requestLocateVehicle,
 } = require("./api");
 const { subscribeAwsTopic } = require("./aws-mqtt");
 
@@ -266,4 +269,279 @@ async function stopClimate(
   throw new Error(`Failed to stop climate after ${maxAttempts} attempts`);
 }
 
-module.exports = { setTargetChargeLevel, startClimate, stopClimate };
+async function lockDoors(
+  awsClient,
+  accessToken,
+  vin,
+  pin,
+  { maxAttempts = 3, verifyTimeout = 60000 } = {}
+) {
+  log("Locking doors...");
+
+  const lockTopic = `$aws/things/thing_${vin}/shadow/name/LOCK_ASYNC/update`;
+  await subscribeAwsTopic(awsClient, lockTopic);
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      await requestLockDoors(accessToken, vin, pin);
+
+      const success = await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          awsClient.removeListener("message", handler);
+          reject(
+            new Error(
+              `Timed out waiting for door lock confirmation (${verifyTimeout / 1000}s)`
+            )
+          );
+        }, verifyTimeout);
+
+        function handler(topic, message) {
+          if (!topic.includes("LOCK_ASYNC")) return;
+
+          try {
+            const payload = JSON.parse(message.toString());
+            const reported = payload.state?.reported;
+            if (!reported) return;
+
+            // Only handle lock responses (not unlock)
+            if (
+              reported.cigServiceRequestId &&
+              !reported.cigServiceRequestId.startsWith("lockDoor")
+            )
+              return;
+
+            debug(
+              `Lock response: ${reported.status} (${reported.cigServiceRequestId})`
+            );
+
+            if (reported.status === "SUCCESS") {
+              clearTimeout(timeout);
+              awsClient.removeListener("message", handler);
+              resolve(true);
+            } else if (
+              reported.status !== "IN_PROGRESS" &&
+              reported.status !== "PENDING"
+            ) {
+              clearTimeout(timeout);
+              awsClient.removeListener("message", handler);
+              reject(
+                new Error(
+                  `Door lock failed with status: ${reported.status}`
+                )
+              );
+            }
+          } catch {
+            // ignore parse errors
+          }
+        }
+
+        awsClient.on("message", handler);
+      });
+
+      if (success) {
+        log("Doors locked");
+        return true;
+      }
+    } catch (err) {
+      if (err.message.includes("Pin does not match")) {
+        throw err;
+      }
+      log(
+        `Door lock attempt ${attempt}/${maxAttempts} failed: ${err.message}`
+      );
+      if (attempt < maxAttempts) {
+        log("Retrying in 10 seconds...");
+        await new Promise((r) => setTimeout(r, 10000));
+      }
+    }
+  }
+
+  throw new Error(`Failed to lock doors after ${maxAttempts} attempts`);
+}
+
+async function unlockDoors(
+  awsClient,
+  accessToken,
+  vin,
+  pin,
+  { maxAttempts = 3, verifyTimeout = 60000 } = {}
+) {
+  log("Unlocking doors...");
+
+  const lockTopic = `$aws/things/thing_${vin}/shadow/name/LOCK_ASYNC/update`;
+  await subscribeAwsTopic(awsClient, lockTopic);
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      await requestUnlockDoors(accessToken, vin, pin);
+
+      const success = await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          awsClient.removeListener("message", handler);
+          reject(
+            new Error(
+              `Timed out waiting for door unlock confirmation (${verifyTimeout / 1000}s)`
+            )
+          );
+        }, verifyTimeout);
+
+        function handler(topic, message) {
+          if (!topic.includes("LOCK_ASYNC")) return;
+
+          try {
+            const payload = JSON.parse(message.toString());
+            const reported = payload.state?.reported;
+            if (!reported) return;
+
+            // Only handle unlock responses (not lock)
+            if (
+              reported.cigServiceRequestId &&
+              !reported.cigServiceRequestId.startsWith("unlockDoor")
+            )
+              return;
+
+            debug(
+              `Unlock response: ${reported.status} (${reported.cigServiceRequestId})`
+            );
+
+            if (reported.status === "SUCCESS") {
+              clearTimeout(timeout);
+              awsClient.removeListener("message", handler);
+              resolve(true);
+            } else if (
+              reported.status !== "IN_PROGRESS" &&
+              reported.status !== "PENDING"
+            ) {
+              clearTimeout(timeout);
+              awsClient.removeListener("message", handler);
+              reject(
+                new Error(
+                  `Door unlock failed with status: ${reported.status}`
+                )
+              );
+            }
+          } catch {
+            // ignore parse errors
+          }
+        }
+
+        awsClient.on("message", handler);
+      });
+
+      if (success) {
+        log("Doors unlocked");
+        return true;
+      }
+    } catch (err) {
+      if (err.message.includes("Pin does not match")) {
+        throw err;
+      }
+      log(
+        `Door unlock attempt ${attempt}/${maxAttempts} failed: ${err.message}`
+      );
+      if (attempt < maxAttempts) {
+        log("Retrying in 10 seconds...");
+        await new Promise((r) => setTimeout(r, 10000));
+      }
+    }
+  }
+
+  throw new Error(`Failed to unlock doors after ${maxAttempts} attempts`);
+}
+
+async function locateVehicle(
+  awsClient,
+  accessToken,
+  vin,
+  pin,
+  { maxAttempts = 3, verifyTimeout = 60000 } = {}
+) {
+  log("Locating vehicle...");
+
+  const locationTopic = `$aws/things/thing_${vin}/shadow/name/CARFINDER_LOCATION_ASYNC/update`;
+  await subscribeAwsTopic(awsClient, locationTopic);
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      await requestLocateVehicle(accessToken, vin, pin);
+
+      const result = await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          awsClient.removeListener("message", handler);
+          reject(
+            new Error(
+              `Timed out waiting for locate confirmation (${verifyTimeout / 1000}s)`
+            )
+          );
+        }, verifyTimeout);
+
+        function handler(topic, message) {
+          if (!topic.includes("CARFINDER_LOCATION_ASYNC")) return;
+
+          try {
+            const payload = JSON.parse(message.toString());
+            const reported = payload.state?.reported;
+            if (!reported) return;
+
+            debug(
+              `Locate response: ${reported.status} (${reported.cigServiceRequestId})`
+            );
+
+            if (reported.status === "SUCCESS") {
+              clearTimeout(timeout);
+              awsClient.removeListener("message", handler);
+              resolve(reported.responseBody);
+            } else if (
+              reported.status !== "IN_PROGRESS" &&
+              reported.status !== "PENDING"
+            ) {
+              clearTimeout(timeout);
+              awsClient.removeListener("message", handler);
+              reject(
+                new Error(
+                  `Locate vehicle failed with status: ${reported.status}`
+                )
+              );
+            }
+          } catch {
+            // ignore parse errors
+          }
+        }
+
+        awsClient.on("message", handler);
+      });
+
+      if (result) {
+        const gps = result.gpsData?.coordinate;
+        if (gps) {
+          log(`Vehicle located: ${gps.latitude}, ${gps.longitude}`);
+        } else {
+          log("Vehicle located (no GPS data in response)");
+        }
+        return result;
+      }
+    } catch (err) {
+      if (err.message.includes("Pin does not match")) {
+        throw err;
+      }
+      log(
+        `Locate vehicle attempt ${attempt}/${maxAttempts} failed: ${err.message}`
+      );
+      if (attempt < maxAttempts) {
+        log("Retrying in 10 seconds...");
+        await new Promise((r) => setTimeout(r, 10000));
+      }
+    }
+  }
+
+  throw new Error(`Failed to locate vehicle after ${maxAttempts} attempts`);
+}
+
+module.exports = {
+  setTargetChargeLevel,
+  startClimate,
+  stopClimate,
+  lockDoors,
+  unlockDoors,
+  locateVehicle,
+};
