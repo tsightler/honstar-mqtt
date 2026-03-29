@@ -57,6 +57,7 @@ if [ "$ADDON_MODE" = true ]; then
     export MQTT_URL="$MQTT_URL"
     export POLL_INTERVAL="$POLL_INTERVAL"
     export DEBUG="$DEBUG_MODE"
+    export TZ=$(bashio::info.timezone)
 
 else
     # ── Standalone Docker Mode ──

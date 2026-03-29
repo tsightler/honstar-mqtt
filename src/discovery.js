@@ -1,11 +1,39 @@
 const { log, debug } = require("./config");
 
+const BATTERY_CAPACITY_KWH = {
+  Honda:  { Prologue: 85 },
+  Acura:  { ZDX: 102 },
+};
+
 const TIRE_POSITIONS = {
   frontLeft:  { slug: "tire_pressure_lf", name: "Tire Pressure: Left Front", placard: "placardFront" },
   frontRight: { slug: "tire_pressure_rf", name: "Tire Pressure: Right Front", placard: "placardFront" },
   rearLeft:   { slug: "tire_pressure_lr", name: "Tire Pressure: Left Rear", placard: "placardRear" },
   rearRight:  { slug: "tire_pressure_rr", name: "Tire Pressure: Right Rear", placard: "placardRear" },
 };
+
+const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+function resolveChargeCompleteTime(ct, responseTimestamp) {
+  const now = new Date(responseTimestamp);
+  const targetDayIdx = DAYS.indexOf(ct.day);
+  if (targetDayIdx === -1) return null;
+
+  const hour = parseInt(ct.hour);
+  const minute = parseInt(ct.minute);
+  if (isNaN(hour) || isNaN(minute)) return null;
+
+  const candidate = new Date(now);
+  let daysAhead = targetDayIdx - candidate.getDay();
+  if (daysAhead < 0) daysAhead += 7;
+
+  candidate.setDate(candidate.getDate() + daysAhead);
+  candidate.setHours(hour, minute, 0, 0);
+
+  if (candidate <= now) candidate.setDate(candidate.getDate() + 7);
+
+  return candidate.toISOString();
+}
 
 function buildDeviceInfo(vin, vehicle) {
   return {
@@ -180,6 +208,21 @@ function publishDiscovery(brokerClient, vin, vehicle) {
     state_topic: `honstar-mqtt/${vin}/ev_plug_state/state`,
   });
 
+  pub("sensor", "ev_charge_complete_time", {
+    name: "EV Charge Complete Time",
+    device_class: "timestamp",
+    icon: "mdi:battery-clock-outline",
+    state_topic: `honstar-mqtt/${vin}/ev_charge_complete_time/state`,
+  });
+
+  pub("sensor", "ev_charge_rate", {
+    name: "EV Charge Rate",
+    state_class: "measurement",
+    unit_of_measurement: "kW",
+    icon: "mdi:flash",
+    state_topic: `honstar-mqtt/${vin}/ev_charge_rate/state`,
+  });
+
   log("Published HA MQTT discovery configs");
 }
 
@@ -191,7 +234,7 @@ function publishAvailability(brokerClient, vin, available) {
   );
 }
 
-function publishStates(brokerClient, vin, dashboard) {
+function publishStates(brokerClient, vin, dashboard, vehicle) {
   const opts = { retain: true, qos: 1 };
 
   if (dashboard.battery?.stateOfCharge != null) {
@@ -239,6 +282,36 @@ function publishStates(brokerClient, vin, dashboard) {
       charging ? "ON" : "OFF",
       opts
     );
+
+    if (charging && dashboard.chargeCompleteTime?.hour != null && dashboard.timestamp) {
+      const isoTime = resolveChargeCompleteTime(dashboard.chargeCompleteTime, dashboard.timestamp);
+      if (isoTime) {
+        brokerClient.publish(
+          `honstar-mqtt/${vin}/ev_charge_complete_time/state`,
+          isoTime,
+          opts
+        );
+
+        const capacity = BATTERY_CAPACITY_KWH[vehicle?.DivisionName]?.[vehicle?.ModelCode];
+        const currentSoc = parseFloat(dashboard.battery?.stateOfCharge);
+        const targetSoc = parseFloat(dashboard.chargeSettings?.targetLevel);
+
+        if (capacity && !isNaN(currentSoc) && !isNaN(targetSoc) && targetSoc > currentSoc) {
+          const hoursRemaining = (new Date(isoTime) - new Date(dashboard.timestamp)) / 3600000;
+          if (hoursRemaining > 0) {
+            const kw = ((targetSoc - currentSoc) / 100) * capacity / hoursRemaining;
+            brokerClient.publish(
+              `honstar-mqtt/${vin}/ev_charge_rate/state`,
+              String(Math.round(kw)),
+              opts
+            );
+          }
+        }
+      }
+    } else {
+      brokerClient.publish(`honstar-mqtt/${vin}/ev_charge_complete_time/state`, "", opts);
+      brokerClient.publish(`honstar-mqtt/${vin}/ev_charge_rate/state`, "", opts);
+    }
   }
 
   if (dashboard.battery?.plugStatus != null) {

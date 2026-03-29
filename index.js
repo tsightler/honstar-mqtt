@@ -216,7 +216,7 @@ Docker:
       if (dashboard) {
         printDashboard(dashboard);
         publishData(brokerClient, vin, dashboard);
-        publishStates(brokerClient, vin, dashboard);
+        publishStates(brokerClient, vin, dashboard, vehicle);
         publishAvailability(brokerClient, vin, true);
 
         // Handle target charge level with optimistic mode awareness
