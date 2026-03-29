@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.4.2] - 2026-03-29
+
+### Changed
+- Use MQTT Device Tracker for location
+
 ## [1.4.1] - 2026-03-29
 
 ### Fixed
