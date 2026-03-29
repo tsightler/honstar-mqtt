@@ -70,7 +70,7 @@ function publishDiscovery(brokerClient, vin, vehicle) {
   // ── Sensors ──
 
   pub("sensor", "ev_battery_level", {
-    name: "EV Battery Level",
+    name: "Battery Level",
     device_class: "battery",
     state_class: "measurement",
     unit_of_measurement: "%",
@@ -80,7 +80,7 @@ function publishDiscovery(brokerClient, vin, vehicle) {
   });
 
   pub("sensor", "ev_range", {
-    name: "EV Range",
+    name: "Range",
     state_class: "measurement",
     unit_of_measurement: "mi",
     icon: "mdi:ev-station",
@@ -106,7 +106,7 @@ function publishDiscovery(brokerClient, vin, vehicle) {
 
   // Target Charge Level (settable number entity)
   pub("number", "ev_target_charge_level", {
-    name: "EV Target Charge Level",
+    name: "Target Charge Level",
     icon: "mdi:battery-charging-high",
     state_topic: `honstar-mqtt/${vin}/ev_target_charge_level/state`,
     command_topic: `honstar-mqtt/${vin}/ev_target_charge_level/set`,
@@ -191,7 +191,7 @@ function publishDiscovery(brokerClient, vin, vehicle) {
   // ── Binary Sensors ──
 
   pub("binary_sensor", "ev_charge_state", {
-    name: "EV Charge State",
+    name: "Charge State",
     device_class: "battery_charging",
     icon: "mdi:battery-charging",
     payload_on: "ON",
@@ -200,7 +200,7 @@ function publishDiscovery(brokerClient, vin, vehicle) {
   });
 
   pub("binary_sensor", "ev_plug_state", {
-    name: "EV Plug State",
+    name: "Plug State",
     device_class: "plug",
     icon: "mdi:ev-plug-type1",
     payload_on: "ON",
@@ -209,14 +209,14 @@ function publishDiscovery(brokerClient, vin, vehicle) {
   });
 
   pub("sensor", "ev_charge_complete_time", {
-    name: "EV Charge Complete Time",
+    name: "Charge Complete Time",
     device_class: "timestamp",
     icon: "mdi:battery-clock-outline",
     state_topic: `honstar-mqtt/${vin}/ev_charge_complete_time/state`,
   });
 
   pub("sensor", "ev_charge_rate", {
-    name: "EV Charge Rate",
+    name: "Estimated Charge Rate",
     state_class: "measurement",
     unit_of_measurement: "kW",
     icon: "mdi:flash",

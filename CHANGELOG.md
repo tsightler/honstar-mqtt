@@ -1,29 +1,19 @@
 # Changelog
 
-## [1.4.5] - 2026-03-29
-
-### Fixed
-- Fix charge rate estimate
-
-## [1.4.4] - 2026-03-29
-
-### Added
-- Add charge completion and estimated  kW
-
-## [1.4.3] - 2026-03-29
-
-### Added
-- Add locking./unlocking state
-
-## [1.4.2] - 2026-03-29
-
-### Changed
-- Use MQTT Device Tracker for location
-
-## [1.4.1] - 2026-03-29
+## [1.4.1-1.4.6] - 2026-03-29
 
 ### Fixed
 - Fix PIN not working
+- Fix charge rate estimate
+
+### Added
+- Add charge completion and estimated  kW
+- Add locking./unlocking state
+
+### Changed
+- Use MQTT Device Tracker for location
+- Rmoved EV prefix from charging and battery entities
+
 
 ## [1.4.0] - 2026-03-29
 
@@ -33,7 +23,6 @@
 
 ### Changed
 - Fox image cleanup action
-
 
 
 ## [1.3.1] - 2026-03-24
@@ -49,18 +38,14 @@
 - Updated icons/logos
 - Updated release scripts and repository configuration
 
-## [1.2.6] - 2026-02-12
+## [1.2.3-1.2.6] - 2026-02-12
+
+### Fixed
+- Fixed various rounding/precision issues
 
 ### Changed
 - Minor tweaks and cleanups
 - Updated README
-
-## [1.2.5] - 2026-02-12
-## [1.2.4] - 2026-02-12
-## [1.2.3] - 2026-02-12
-
-### Fixed
-- Fixed various rounding/precision issues
 
 ## [1.2.2] - 2026-02-12
 
