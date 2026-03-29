@@ -1,9 +1,9 @@
 # Changelog
 
-## [1.4.6] - 2026-03-29
+## [1.4.7] - 2026-03-29
 
 ### Changed
-- Remove EV prefix from entity names
+- Improve charge rate estimate
 
 
 
