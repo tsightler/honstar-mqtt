@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.4.5] - 2026-03-29
+
+### Fixed
+- Fix charge rate estimate
+
 ## [1.4.4] - 2026-03-29
 
 ### Added
