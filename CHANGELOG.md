@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.4.0] - 2026-03-29
+
+### Added
+- Add lock/unlock/locate
+- Add logo
+
+### Changed
+- Fox image cleanup action
+
+
+
 ## [1.3.1] - 2026-03-24
 
 ### Fixed
