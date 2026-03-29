@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.4.3] - 2026-03-29
+
+### Added
+- Add locking./unlocking state
+
 ## [1.4.2] - 2026-03-29
 
 ### Changed
