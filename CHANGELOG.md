@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.6] - 2026-03-29
+
+### Changed
+- Remove EV prefix from entity names
+
+
+
 ## [1.4.1-1.4.6] - 2026-03-29
 
 ### Fixed
