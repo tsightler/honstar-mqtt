@@ -118,6 +118,8 @@ function publishDiscovery(brokerClient, vin, vehicle) {
     command_topic: `honstar-mqtt/${vin}/door_lock/set`,
     state_locked: "LOCKED",
     state_unlocked: "UNLOCKED",
+    state_locking: "LOCKING",
+    state_unlocking: "UNLOCKING",
     payload_lock: "LOCK",
     payload_unlock: "UNLOCK",
   });

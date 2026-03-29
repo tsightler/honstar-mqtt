@@ -371,7 +371,7 @@ Docker:
           log(`Operation in progress, queued door ${cmd.toLowerCase()}`);
           brokerClient.publish(
             `honstar-mqtt/${vin}/door_lock/state`,
-            cmd === "LOCK" ? "LOCKED" : "UNLOCKED",
+            cmd === "LOCK" ? "LOCKING" : "UNLOCKING",
             mqttOpts
           );
           return;
@@ -610,13 +610,12 @@ Docker:
       pendingLockCmd = null;
       const lockStateTopic = `honstar-mqtt/${vin}/door_lock/state`;
 
-      // Optimistically publish the desired state
+      // Publish transitional state
       brokerClient.publish(
         lockStateTopic,
-        cmd === "LOCK" ? "LOCKED" : "UNLOCKED",
+        cmd === "LOCK" ? "LOCKING" : "UNLOCKING",
         mqttOpts
       );
-      log(`Optimistically set door lock state to ${cmd}`);
 
       let awsClient;
       try {
@@ -632,10 +631,17 @@ Docker:
         } else {
           await unlockDoors(awsClient, accessToken, vin, pin);
         }
+
+        // Command succeeded, publish final state
+        brokerClient.publish(
+          lockStateTopic,
+          cmd === "LOCK" ? "LOCKED" : "UNLOCKED",
+          mqttOpts
+        );
       } catch (err) {
         log(`Door ${cmd.toLowerCase()} command failed: ${err.message}`);
 
-        // Revert to opposite state
+        // Revert to previous state
         brokerClient.publish(
           lockStateTopic,
           cmd === "LOCK" ? "UNLOCKED" : "LOCKED",
