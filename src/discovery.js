@@ -130,27 +130,17 @@ function publishDiscovery(brokerClient, vin, vehicle) {
     payload_press: "PRESS",
   });
 
-  // Vehicle location sensors
-  pub("sensor", "location_latitude", {
-    name: "Location Latitude",
-    icon: "mdi:latitude",
-    state_topic: `honstar-mqtt/${vin}/location/state`,
-    value_template: "{{ value_json.latitude }}",
-  });
+  // Remove old location sensor entities (replaced by device_tracker)
+  brokerClient.publish(`homeassistant/sensor/${vin}/location_latitude/config`, "", opts);
+  brokerClient.publish(`homeassistant/sensor/${vin}/location_longitude/config`, "", opts);
+  brokerClient.publish(`homeassistant/sensor/${vin}/location_timestamp/config`, "", opts);
 
-  pub("sensor", "location_longitude", {
-    name: "Location Longitude",
-    icon: "mdi:longitude",
-    state_topic: `honstar-mqtt/${vin}/location/state`,
-    value_template: "{{ value_json.longitude }}",
-  });
-
-  pub("sensor", "location_timestamp", {
-    name: "Location Timestamp",
-    device_class: "timestamp",
-    icon: "mdi:clock-outline",
-    state_topic: `honstar-mqtt/${vin}/location/state`,
-    value_template: "{{ value_json.timestamp }}",
+  // Vehicle location (device tracker)
+  pub("device_tracker", "location", {
+    name: "Location",
+    icon: "mdi:car-connected",
+    json_attributes_topic: `honstar-mqtt/${vin}/location/state`,
+    source_type: "gps",
   });
 
   // Tire pressures (4 sensors)
