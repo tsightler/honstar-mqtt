@@ -110,7 +110,7 @@ async function main() {
   const password = process.env.HWS_PASSWORD || process.argv[3];
   const targetVin = process.env.VIN || process.argv[4];
   const mqttUrl = process.env.MQTT_URL;
-  const pin = process.env.PIN || null;
+  const pin = process.env.HWS_PIN || null;
   const pollInterval = Math.max(parseInt(process.env.POLL_INTERVAL, 10) || 900, 900);
 
   if (!username || !password) {
