@@ -11,14 +11,22 @@ jobs:
     permissions:
       packages: write
 
+    strategy:
+      matrix:
+        package:
+          - honstar-mqtt
+          - honstar-mqtt-amd64
+          - honstar-mqtt-aarch64
+          - honstar-mqtt-armv7
+          - honstar-mqtt-armhf
+
     steps:
       - name: Delete old images
-        uses: snok/container-retention-policy@v2
+        uses: actions/delete-package-versions@v5
         with:
-          image-names: honstar-mqtt*
-          cut-off: One week ago UTC
-          keep-at-least: 3
-          untagged-only: false
-          skip-tags: latest
-          account-type: personal
+          package-name: ${{ matrix.package }}
+          package-type: container
+          min-versions-to-keep: 3
+          delete-only-untagged-versions: false
+          ignore-versions: '^latest$'
           token: ${{ secrets.GITHUB_TOKEN }}
