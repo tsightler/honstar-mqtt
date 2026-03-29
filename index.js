@@ -23,11 +23,8 @@ const {
 const { connectAwsMqtt, subscribeAwsTopic } = require("./src/aws-mqtt");
 const { connectBroker, publishData } = require("./src/broker");
 const { parseDashboard, printDashboard } = require("./src/dashboard");
-const {
-  publishDiscovery,
-  publishAvailability,
-  publishStates,
-} = require("./src/discovery");
+const { publishDiscovery } = require("./src/discovery");
+const { publishAvailability, publishStates } = require("./src/states");
 const {
   setTargetChargeLevel,
   startClimate,
