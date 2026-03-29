@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.4.4] - 2026-03-29
+
+### Added
+- Add charge completion and estimated  kW
+
 ## [1.4.3] - 2026-03-29
 
 ### Added
