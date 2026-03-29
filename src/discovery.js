@@ -1,9 +1,9 @@
 const { log, debug } = require("./config");
 
-const BATTERY_CAPACITY_KWH = {
-  Honda:  { Prologue: 85 },
-  Acura:  { ZDX: 102 },
-};
+function getBatteryCapacity(vehicle) {
+  const model = vehicle?.ModelCode?.toUpperCase() || "";
+  return model.includes("ZDX") ? 102 : 85;
+}
 
 const TIRE_POSITIONS = {
   frontLeft:  { slug: "tire_pressure_lf", name: "Tire Pressure: Left Front", placard: "placardFront" },
@@ -292,9 +292,10 @@ function publishStates(brokerClient, vin, dashboard, vehicle) {
           opts
         );
 
-        const capacity = BATTERY_CAPACITY_KWH[vehicle?.DivisionName]?.[vehicle?.ModelCode];
+        const capacity = getBatteryCapacity(vehicle);
         const currentSoc = parseFloat(dashboard.battery?.stateOfCharge);
         const targetSoc = parseFloat(dashboard.chargeSettings?.targetLevel);
+        debug(`Charge rate calc: model=${vehicle?.ModelCode} capacity=${capacity}kWh soc=${currentSoc} target=${targetSoc}`);
 
         if (capacity && !isNaN(currentSoc) && !isNaN(targetSoc) && targetSoc > currentSoc) {
           const hoursRemaining = (new Date(isoTime) - new Date(dashboard.timestamp)) / 3600000;
