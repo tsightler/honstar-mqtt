@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.4.8] - 2026-04-01
+
+### Changed
+- Charge rate estimation tweaks
+- Lock/Unlock to Unknown after 2 minutes
+
 ## [1.4.7] - 2026-03-29
 
 ### Changed
