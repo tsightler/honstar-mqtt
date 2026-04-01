@@ -160,6 +160,7 @@ Docker:
   let climateOffTimer = null;
   let pendingClimateCmd = null;
   let pendingLockCmd = null;
+  let lockStateTimer = null;
   let pendingLocateCmd = null;
   let lastLocation = null;
 
@@ -171,6 +172,7 @@ Docker:
 
     if (pollTimer) clearInterval(pollTimer);
     if (climateOffTimer) clearTimeout(climateOffTimer);
+    if (lockStateTimer) clearTimeout(lockStateTimer);
 
     if (brokerClient) {
       if (vin) {
@@ -607,6 +609,8 @@ Docker:
       pendingLockCmd = null;
       const lockStateTopic = `honstar-mqtt/${vin}/door_lock/state`;
 
+      if (lockStateTimer) clearTimeout(lockStateTimer);
+
       // Publish transitional state
       brokerClient.publish(
         lockStateTopic,
@@ -629,21 +633,21 @@ Docker:
           await unlockDoors(awsClient, accessToken, vin, pin);
         }
 
-        // Command succeeded, publish final state
+        // Command succeeded, publish final state then revert to unknown after 2 min
         brokerClient.publish(
           lockStateTopic,
           cmd === "LOCK" ? "LOCKED" : "UNLOCKED",
           mqttOpts
         );
+        lockStateTimer = setTimeout(() => {
+          brokerClient.publish(lockStateTopic, "", mqttOpts);
+          lockStateTimer = null;
+        }, 120000);
       } catch (err) {
         log(`Door ${cmd.toLowerCase()} command failed: ${err.message}`);
 
-        // Revert to previous state
-        brokerClient.publish(
-          lockStateTopic,
-          cmd === "LOCK" ? "UNLOCKED" : "LOCKED",
-          mqttOpts
-        );
+        // Clear state on failure
+        brokerClient.publish(lockStateTopic, "", mqttOpts);
 
         if (
           err.message.includes("401") ||
