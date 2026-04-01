@@ -12,7 +12,20 @@ const TIRE_POSITIONS = {
   rearRight:  { slug: "tire_pressure_rr", placard: "placardRear" },
 };
 
-const AC_CHARGE_RATES_KW = [1, 2, 3, 4, 6, 8, 10, 12];
+const L2_CHARGE_RATES_KW = [1.0, 1.4, 1.9, 2.9, 3.8, 5.8, 7.7, 9.6, 11.5];
+
+// Charge rate tracking state (persists across poll cycles)
+const chargeState = {
+  active: false,
+  isDcfc: null,
+  rollingAverage: null,
+};
+
+function snapToL2Rate(kw) {
+  return L2_CHARGE_RATES_KW.reduce((a, b) =>
+    Math.abs(b - kw) < Math.abs(a - kw) ? b : a
+  );
+}
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
@@ -94,38 +107,78 @@ function publishStates(brokerClient, vin, dashboard, vehicle) {
       opts
     );
 
-    if (charging && dashboard.chargeCompleteTime?.hour != null && dashboard.timestamp) {
-      const isoTime = resolveChargeCompleteTime(dashboard.chargeCompleteTime, dashboard.timestamp);
-      if (isoTime) {
-        brokerClient.publish(
-          `honstar-mqtt/${vin}/ev_charge_complete_time/state`,
-          isoTime,
-          opts
-        );
+    if (charging) {
+      // Initialize charge session on first charging poll
+      if (!chargeState.active) {
+        chargeState.active = true;
+        chargeState.isDcfc = null;
+        chargeState.rollingAverage = null;
+        debug("Charge session started");
+      }
 
-        const capacity = getBatteryCapacity(vehicle);
-        const currentSoc = parseFloat(dashboard.battery?.stateOfCharge);
-        const targetSoc = parseFloat(dashboard.chargeSettings?.targetLevel);
-        debug(`Charge rate calc: model=${vehicle?.ModelCode} capacity=${capacity}kWh soc=${currentSoc} target=${targetSoc}`);
+      if (dashboard.chargeCompleteTime?.hour != null && dashboard.timestamp) {
+        const isoTime = resolveChargeCompleteTime(dashboard.chargeCompleteTime, dashboard.timestamp);
+        if (isoTime) {
+          brokerClient.publish(
+            `honstar-mqtt/${vin}/ev_charge_complete_time/state`,
+            isoTime,
+            opts
+          );
 
-        if (capacity && !isNaN(currentSoc) && !isNaN(targetSoc) && targetSoc > currentSoc) {
-          const hoursRemaining = (new Date(isoTime) - new Date(dashboard.timestamp)) / 3600000;
-          if (hoursRemaining > 0) {
-            const rawKw = ((targetSoc - currentSoc) / 100) * capacity / hoursRemaining;
-            const kw = rawKw > 12
-              ? Math.round(rawKw)
-              : AC_CHARGE_RATES_KW.reduce((a, b) => Math.abs(b - rawKw) < Math.abs(a - rawKw) ? b : a);
-            brokerClient.publish(
-              `honstar-mqtt/${vin}/ev_charge_rate/state`,
-              String(kw),
-              opts
-            );
+          const capacity = getBatteryCapacity(vehicle);
+          const currentSoc = parseFloat(dashboard.battery?.stateOfCharge);
+          const targetSoc = parseFloat(dashboard.chargeSettings?.targetLevel);
+          debug(`Charge rate calc: model=${vehicle?.ModelCode} capacity=${capacity}kWh soc=${currentSoc} target=${targetSoc}`);
+
+          if (capacity && !isNaN(currentSoc) && !isNaN(targetSoc) && targetSoc > currentSoc) {
+            const hoursRemaining = (new Date(isoTime) - new Date(dashboard.timestamp)) / 3600000;
+            if (hoursRemaining > 0) {
+              const rawKw = ((targetSoc - currentSoc) / 100) * capacity / hoursRemaining;
+
+              // Detect charge type on first valid calculation
+              if (chargeState.isDcfc === null) {
+                const minutesRemaining = hoursRemaining * 60;
+                chargeState.isDcfc = (targetSoc - currentSoc) > 5 && minutesRemaining < 10;
+                debug(`Charge type detected: ${chargeState.isDcfc ? "DCFC" : "L1/L2"}`);
+              }
+
+              let kw;
+              if (chargeState.isDcfc) {
+                // DCFC: report raw calculated rate
+                kw = Math.round(rawKw);
+              } else {
+                // L1/L2: rolling average with drift limiting
+                if (chargeState.rollingAverage === null) {
+                  chargeState.rollingAverage = rawKw;
+                } else if (rawKw <= chargeState.rollingAverage * 1.5) {
+                  // Drift max ±0.1 per poll cycle
+                  const diff = rawKw - chargeState.rollingAverage;
+                  chargeState.rollingAverage += Math.max(-0.1, Math.min(0.1, diff));
+                }
+                // If rawKw > 150% of average, sample is ignored (average unchanged)
+                kw = snapToL2Rate(chargeState.rollingAverage);
+              }
+
+              debug(`Charge rate: raw=${rawKw.toFixed(1)}kW avg=${chargeState.rollingAverage != null ? chargeState.rollingAverage.toFixed(1) : "n/a"}kW published=${kw}kW`);
+              brokerClient.publish(
+                `honstar-mqtt/${vin}/ev_charge_rate/state`,
+                String(kw),
+                opts
+              );
+            }
           }
         }
       }
     } else {
+      // Not charging — reset session state
+      if (chargeState.active) {
+        debug("Charge session ended");
+      }
+      chargeState.active = false;
+      chargeState.isDcfc = null;
+      chargeState.rollingAverage = null;
       brokerClient.publish(`honstar-mqtt/${vin}/ev_charge_complete_time/state`, "", opts);
-      brokerClient.publish(`honstar-mqtt/${vin}/ev_charge_rate/state`, "", opts);
+      brokerClient.publish(`honstar-mqtt/${vin}/ev_charge_rate/state`, "0", opts);
     }
   }
 
