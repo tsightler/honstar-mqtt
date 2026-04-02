@@ -12,20 +12,16 @@ const TIRE_POSITIONS = {
   rearRight:  { slug: "tire_pressure_rr", placard: "placardRear" },
 };
 
-const L2_CHARGE_RATES_KW = [1.0, 1.4, 1.9, 2.9, 3.8, 5.8, 7.7, 9.6, 11.5];
+const L2_MAX_KW = 11;
 
 // Charge rate tracking state (persists across poll cycles)
 const chargeState = {
   active: false,
   isDcfc: null,
   rollingAverage: null,
+  locked: false,
+  hadEnoughTime: false,
 };
-
-function snapToL2Rate(kw) {
-  return L2_CHARGE_RATES_KW.reduce((a, b) =>
-    Math.abs(b - kw) < Math.abs(a - kw) ? b : a
-  );
-}
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
@@ -113,6 +109,8 @@ function publishStates(brokerClient, vin, dashboard, vehicle) {
         chargeState.active = true;
         chargeState.isDcfc = null;
         chargeState.rollingAverage = null;
+        chargeState.locked = false;
+        chargeState.hadEnoughTime = false;
         debug("Charge session started");
       }
 
@@ -146,6 +144,9 @@ function publishStates(brokerClient, vin, dashboard, vehicle) {
               if (chargeState.isDcfc) {
                 // DCFC: report raw calculated rate
                 kw = Math.round(rawKw);
+              } else if (chargeState.locked) {
+                // L1/L2 locked: time remaining dropped below 30 min, stop updating
+                kw = Math.round(Math.min(chargeState.rollingAverage, L2_MAX_KW) * 10) / 10;
               } else {
                 // L1/L2: rolling average with drift limiting
                 if (chargeState.rollingAverage === null) {
@@ -156,7 +157,17 @@ function publishStates(brokerClient, vin, dashboard, vehicle) {
                   chargeState.rollingAverage += Math.max(-0.1, Math.min(0.1, diff));
                 }
                 // If rawKw > 150% of average, sample is ignored (average unchanged)
-                kw = snapToL2Rate(chargeState.rollingAverage);
+
+                const minutesRemaining = hoursRemaining * 60;
+                // Track whether we ever had >= 30 min remaining
+                if (minutesRemaining >= 30) chargeState.hadEnoughTime = true;
+                // Lock once time drops below 30 min (only if it was above 30 at some point)
+                if (chargeState.hadEnoughTime && minutesRemaining < 30) {
+                  chargeState.locked = true;
+                  debug("Charge rate locked (< 30 min remaining)");
+                }
+
+                kw = Math.round(Math.min(chargeState.rollingAverage, L2_MAX_KW) * 10) / 10;
               }
 
               debug(`Charge rate: raw=${rawKw.toFixed(1)}kW avg=${chargeState.rollingAverage != null ? chargeState.rollingAverage.toFixed(1) : "n/a"}kW published=${kw}kW`);
@@ -177,6 +188,8 @@ function publishStates(brokerClient, vin, dashboard, vehicle) {
       chargeState.active = false;
       chargeState.isDcfc = null;
       chargeState.rollingAverage = null;
+      chargeState.locked = false;
+      chargeState.hadEnoughTime = false;
       brokerClient.publish(`honstar-mqtt/${vin}/ev_charge_complete_time/state`, "", opts);
       brokerClient.publish(`honstar-mqtt/${vin}/ev_charge_rate/state`, "0", opts);
     }

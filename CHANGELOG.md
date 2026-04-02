@@ -11,8 +11,6 @@
 ### Changed
 - Improve charge rate estimate
 
-
-
 ## [1.4.1-1.4.6] - 2026-03-29
 
 ### Fixed
@@ -26,7 +24,6 @@
 ### Changed
 - Use MQTT Device Tracker for location
 - Rmoved EV prefix from charging and battery entities
-
 
 ## [1.4.0] - 2026-03-29
 
