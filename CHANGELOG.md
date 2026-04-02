@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.9] - 2026-04-02
+
+### Changed
+- More estimated charge rate tweaks
+
+
+
 ## [1.4.8] - 2026-04-01
 
 ### Changed
