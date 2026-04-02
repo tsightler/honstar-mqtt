@@ -21,6 +21,8 @@ const chargeState = {
   rollingAverage: null,
   locked: false,
   hadEnoughTime: false,
+  lastSoc: null,
+  lastIsoTime: null,
 };
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -111,6 +113,8 @@ function publishStates(brokerClient, vin, dashboard, vehicle) {
         chargeState.rollingAverage = null;
         chargeState.locked = false;
         chargeState.hadEnoughTime = false;
+        chargeState.lastSoc = null;
+        chargeState.lastIsoTime = null;
         debug("Charge session started");
       }
 
@@ -140,12 +144,23 @@ function publishStates(brokerClient, vin, dashboard, vehicle) {
                 debug(`Charge type detected: ${chargeState.isDcfc ? "DCFC" : "L1/L2"}`);
               }
 
+              // Detect stale data: SOC and completion time unchanged from last cycle
+              const staleData = chargeState.lastSoc !== null
+                && currentSoc === chargeState.lastSoc
+                && isoTime === chargeState.lastIsoTime;
+              chargeState.lastSoc = currentSoc;
+              chargeState.lastIsoTime = isoTime;
+
+              if (staleData && chargeState.rollingAverage !== null) {
+                debug("Stale SOC/ETA detected, holding charge rate");
+              }
+
               let kw;
               if (chargeState.isDcfc) {
                 // DCFC: report raw calculated rate
                 kw = Math.round(rawKw);
-              } else if (chargeState.locked) {
-                // L1/L2 locked: time remaining dropped below 30 min, stop updating
+              } else if (chargeState.locked || (staleData && chargeState.rollingAverage !== null)) {
+                // L1/L2 locked: stale data or time remaining dropped below 30 min
                 kw = Math.round(Math.min(chargeState.rollingAverage, L2_MAX_KW) * 10) / 10;
               } else {
                 // L1/L2: rolling average with drift limiting
@@ -190,6 +205,8 @@ function publishStates(brokerClient, vin, dashboard, vehicle) {
       chargeState.rollingAverage = null;
       chargeState.locked = false;
       chargeState.hadEnoughTime = false;
+      chargeState.lastSoc = null;
+      chargeState.lastIsoTime = null;
       brokerClient.publish(`honstar-mqtt/${vin}/ev_charge_complete_time/state`, "", opts);
       brokerClient.publish(`honstar-mqtt/${vin}/ev_charge_rate/state`, "0", opts);
     }

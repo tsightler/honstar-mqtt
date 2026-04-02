@@ -163,6 +163,7 @@ Docker:
   let lockStateTimer = null;
   let pendingLocateCmd = null;
   let lastLocation = null;
+  let locationTimer = null;
 
   // Graceful shutdown
   async function shutdown() {
@@ -171,6 +172,7 @@ Docker:
     log("Shutting down...");
 
     if (pollTimer) clearInterval(pollTimer);
+    if (locationTimer) clearInterval(locationTimer);
     if (climateOffTimer) clearTimeout(climateOffTimer);
     if (lockStateTimer) clearTimeout(lockStateTimer);
 
@@ -329,6 +331,13 @@ Docker:
     brokerClient.publish(
       `honstar-mqtt/${vin}/ev_climate_temperature/state`,
       String(climateTemp),
+      mqttOpts
+    );
+
+    // Publish initial lock state as unknown (no way to query from API)
+    brokerClient.publish(
+      `honstar-mqtt/${vin}/door_lock/state`,
+      "None",
       mqttOpts
     );
 
@@ -640,14 +649,14 @@ Docker:
           mqttOpts
         );
         lockStateTimer = setTimeout(() => {
-          brokerClient.publish(lockStateTopic, "", mqttOpts);
+          brokerClient.publish(lockStateTopic, "None", mqttOpts);
           lockStateTimer = null;
         }, 120000);
       } catch (err) {
         log(`Door ${cmd.toLowerCase()} command failed: ${err.message}`);
 
         // Clear state on failure
-        brokerClient.publish(lockStateTopic, "", mqttOpts);
+        brokerClient.publish(lockStateTopic, "None", mqttOpts);
 
         if (
           err.message.includes("401") ||
@@ -752,6 +761,21 @@ Docker:
 
     // Run first poll immediately
     await poll();
+
+    // Auto-locate on startup and every hour (requires PIN)
+    if (pin) {
+      log("Auto-locate enabled (hourly)");
+      if (!busy) {
+        await executeLocateCmd();
+      }
+      locationTimer = setInterval(async () => {
+        if (busy || shuttingDown) {
+          log("Skipping scheduled locate (operation in progress)");
+          return;
+        }
+        await executeLocateCmd();
+      }, 60 * 60 * 1000);
+    }
 
     // Schedule recurring polls
     log(`Next poll in ${pollInterval}s`);
