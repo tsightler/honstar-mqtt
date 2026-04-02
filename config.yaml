@@ -22,6 +22,7 @@ options:
   vin: ""
   mqtt_url: "mqtt://auto_username:auto_password@auto_hostname"
   poll_interval: 900
+  location_interval: 3600
   debug: false
 schema:
   hws_email: email
@@ -30,6 +31,7 @@ schema:
   vin: str?
   mqtt_url: str?
   poll_interval: int?
+  location_interval: int?
   debug: bool?
 image: ghcr.io/tsightler/honstar-mqtt-{arch}
 init: false

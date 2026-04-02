@@ -109,6 +109,8 @@ async function main() {
   const mqttUrl = process.env.MQTT_URL;
   const pin = process.env.HWS_PIN || null;
   const pollInterval = Math.max(parseInt(process.env.POLL_INTERVAL, 10) || 900, 900);
+  const locationIntervalEnv = parseInt(process.env.LOCATION_INTERVAL, 10);
+  const locationInterval = locationIntervalEnv === 0 ? 0 : Math.max(locationIntervalEnv || 3600, 600);
 
   if (!username || !password) {
     console.log(`
@@ -124,6 +126,7 @@ Environment variables:
   MQTT_URL         MQTT broker URL (required)
                    e.g. mqtt://user:pass@192.168.1.100:1883
   POLL_INTERVAL    Seconds between polls (minimum/default: 900 = 15 min)
+  LOCATION_INTERVAL Seconds between location polls (min: 600, default: 3600, 0=disable)
   DEBUG            Enable debug logging (true/false, default: false)
 
 Docker:
@@ -142,6 +145,7 @@ Docker:
   const { version } = require("./package.json");
   log(`HOnStar MQTT Gateway v${version} starting...`);
   log(`Poll interval: ${pollInterval}s`);
+  log(`Location interval: ${locationInterval === 0 ? "disabled" : locationInterval + "s"}`);
 
   // State
   let brokerClient = null;
@@ -773,9 +777,9 @@ Docker:
     // Run first poll immediately
     await poll();
 
-    // Auto-locate on startup and every hour (requires PIN)
-    if (pin) {
-      log("Auto-locate enabled (hourly)");
+    // Auto-locate on startup and at configurable interval (requires PIN)
+    if (pin && locationInterval > 0) {
+      log(`Auto-locate enabled (every ${locationInterval}s)`);
       if (!busy) {
         await executeLocateCmd();
       }
@@ -785,7 +789,7 @@ Docker:
           return;
         }
         await executeLocateCmd();
-      }, 60 * 60 * 1000);
+      }, locationInterval * 1000);
     }
 
     // Schedule recurring polls
