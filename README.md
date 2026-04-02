@@ -7,12 +7,16 @@ The application has full support for Home Assistant MQTT discovery, and can run 
 
 ## Features
 
-- Battery level, range, and charge status
-- Plug state and charge mode
-- Odometer
-- Tire pressures with warning states
+- Battery level (SOC)
 - Set target charge level (50-100%)
 - Climate preconditioning start/stop with temperature control
+- Estimated Range
+- Plug state and charge mode
+- Estimated charge completion time and rate (kW)
+- Lock/Unlock
+- Odometer
+- Tire pressures with warning states
+- Vehicle Location polled hourly or on-demand (10 minute minimum)
 - Home Assistant MQTT discovery (auto-creates entities)
 - Configurable poll interval (900 seconds minimum)
 

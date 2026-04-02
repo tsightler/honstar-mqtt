@@ -139,7 +139,8 @@ Docker:
     process.exit(1);
   }
 
-  log("HOnStar MQTT Gateway starting...");
+  const { version } = require("./package.json");
+  log(`HOnStar MQTT Gateway v${version} starting...`);
   log(`Poll interval: ${pollInterval}s`);
 
   // State
@@ -162,6 +163,7 @@ Docker:
   let pendingLockCmd = null;
   let lockStateTimer = null;
   let pendingLocateCmd = null;
+  let lastLocateTime = 0;
   let lastLocation = null;
   let locationTimer = null;
 
@@ -399,6 +401,14 @@ Docker:
 
         if (!pin) {
           log("Cannot locate vehicle: PIN not configured");
+          return;
+        }
+
+        const locateCooldown = 10 * 60 * 1000;
+        const timeSinceLastLocate = Date.now() - lastLocateTime;
+        if (timeSinceLastLocate < locateCooldown) {
+          const remainMin = Math.ceil((locateCooldown - timeSinceLastLocate) / 60000);
+          log(`Locate request ignored: cooldown active (${remainMin} min remaining)`);
           return;
         }
 
@@ -682,6 +692,7 @@ Docker:
     async function executeLocateCmd() {
       busy = true;
       pendingLocateCmd = null;
+      lastLocateTime = Date.now();
 
       let awsClient;
       try {
