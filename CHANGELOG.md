@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.5.2] - 2026-04-03
+
+### Added
+- Add version to log banner
+
+### Fixed
+- Fix location not updating on odometer change
+
 ## [1.5.1] - 2026-04-03
 
 ### Changed
