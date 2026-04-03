@@ -262,13 +262,8 @@ Docker:
         const currentOdometer = dashboard.odometer?.value;
         if (currentOdometer != null) {
           if (lastOdometer != null && currentOdometer !== lastOdometer && pin) {
-            log(`Odometer changed (${lastOdometer} -> ${currentOdometer}), updating location`);
-            if (!busy) {
-              await executeLocateCmd();
-            } else {
-              pendingLocateCmd = "PRESS";
-              log("Operation in progress, queued locate for odometer change");
-            }
+            log(`Odometer changed (${lastOdometer} -> ${currentOdometer}), queuing location update`);
+            pendingLocateCmd = "PRESS";
           }
           lastOdometer = currentOdometer;
         }
@@ -805,6 +800,7 @@ Docker:
       } finally {
         busy = false;
       }
+      await processPendingCommands();
       if (!shuttingDown) {
         log(`Next poll in ${pollInterval}s`);
       }

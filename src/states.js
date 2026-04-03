@@ -18,7 +18,8 @@ const L2_MAX_KW = 11;
 const chargeState = {
   active: false,
   isDcfc: null,
-  rollingAverage: null,
+  lastRawKw: null,
+  averageKw: null,
   locked: false,
   hadEnoughTime: false,
   lastSoc: null,
@@ -110,7 +111,8 @@ function publishStates(brokerClient, vin, dashboard, vehicle) {
       if (!chargeState.active) {
         chargeState.active = true;
         chargeState.isDcfc = null;
-        chargeState.rollingAverage = null;
+        chargeState.lastRawKw = null;
+        chargeState.averageKw = null;
         chargeState.locked = false;
         chargeState.hadEnoughTime = false;
         chargeState.lastSoc = null;
@@ -151,7 +153,7 @@ function publishStates(brokerClient, vin, dashboard, vehicle) {
               chargeState.lastSoc = currentSoc;
               chargeState.lastIsoTime = isoTime;
 
-              if (staleData && chargeState.rollingAverage !== null) {
+              if (staleData && chargeState.averageKw !== null) {
                 debug("Stale SOC/ETA detected, holding charge rate");
               }
 
@@ -159,19 +161,17 @@ function publishStates(brokerClient, vin, dashboard, vehicle) {
               if (chargeState.isDcfc) {
                 // DCFC: report raw calculated rate
                 kw = Math.round(rawKw);
-              } else if (chargeState.locked || (staleData && chargeState.rollingAverage !== null)) {
+              } else if (chargeState.locked || (staleData && chargeState.averageKw !== null)) {
                 // L1/L2 locked: stale data or time remaining dropped below 30 min
-                kw = Math.round(Math.min(chargeState.rollingAverage, L2_MAX_KW) * 10) / 10;
+                kw = Math.round(Math.min(chargeState.averageKw, L2_MAX_KW) * 10) / 10;
               } else {
-                // L1/L2: rolling average with drift limiting
-                if (chargeState.rollingAverage === null) {
-                  chargeState.rollingAverage = rawKw;
-                } else if (rawKw <= chargeState.rollingAverage * 1.5) {
-                  // Drift max ±0.1 per poll cycle
-                  const diff = rawKw - chargeState.rollingAverage;
-                  chargeState.rollingAverage += Math.max(-0.1, Math.min(0.1, diff));
+                // L1/L2: average of last two samples
+                if (chargeState.lastRawKw === null) {
+                  chargeState.averageKw = rawKw;
+                } else {
+                  chargeState.averageKw = (chargeState.lastRawKw + rawKw) / 2;
                 }
-                // If rawKw > 150% of average, sample is ignored (average unchanged)
+                chargeState.lastRawKw = rawKw;
 
                 const minutesRemaining = hoursRemaining * 60;
                 // Track whether we ever had >= 30 min remaining
@@ -182,10 +182,10 @@ function publishStates(brokerClient, vin, dashboard, vehicle) {
                   debug("Charge rate locked (< 30 min remaining)");
                 }
 
-                kw = Math.round(Math.min(chargeState.rollingAverage, L2_MAX_KW) * 10) / 10;
+                kw = Math.round(Math.min(chargeState.averageKw, L2_MAX_KW) * 10) / 10;
               }
 
-              debug(`Charge rate: raw=${rawKw.toFixed(1)}kW avg=${chargeState.rollingAverage != null ? chargeState.rollingAverage.toFixed(1) : "n/a"}kW published=${kw}kW`);
+              debug(`Charge rate: raw=${rawKw.toFixed(1)}kW avg=${chargeState.averageKw != null ? chargeState.averageKw.toFixed(1) : "n/a"}kW published=${kw}kW`);
               brokerClient.publish(
                 `honstar-mqtt/${vin}/ev_charge_rate/state`,
                 String(kw),
@@ -202,7 +202,8 @@ function publishStates(brokerClient, vin, dashboard, vehicle) {
       }
       chargeState.active = false;
       chargeState.isDcfc = null;
-      chargeState.rollingAverage = null;
+      chargeState.lastRawKw = null;
+      chargeState.averageKw = null;
       chargeState.locked = false;
       chargeState.hadEnoughTime = false;
       chargeState.lastSoc = null;
