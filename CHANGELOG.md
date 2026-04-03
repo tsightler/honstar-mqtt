@@ -1,18 +1,21 @@
 # Changelog
 
+## [1.5.1] - 2026-04-03
+
+### Changed
+- Trigger location update on odometer change
+
+
+
 ## [1.5.0] - 2026-04-02
 
 ### Changed
-- Make location interval configurable
-- Limit manual location polling to 10 minute interval
-- Hourly location poling, lock fixes
+- Implement location device tracker entity
 
 ## [1.4.9] - 2026-04-02
 
 ### Changed
 - More estimated charge rate tweaks
-
-
 
 ## [1.4.8] - 2026-04-01
 
