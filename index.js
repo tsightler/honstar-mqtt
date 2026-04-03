@@ -800,11 +800,10 @@ Docker:
       } finally {
         busy = false;
       }
+      await processPendingCommands();
       if (!shuttingDown) {
         log(`Next poll in ${pollInterval}s`);
       }
-      // Run pending commands (e.g. odometer-triggered locate) without blocking the poll loop
-      processPendingCommands().catch(err => log(`Pending command error: ${err.message}`));
     }, pollInterval * 1000);
   } catch (err) {
     log(`Fatal error: ${err.message}`);
