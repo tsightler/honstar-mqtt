@@ -14,6 +14,7 @@ fi
 echo "============================================"
 echo " HOnStar MQTT Gateway"
 echo "============================================"
+echo " Version: $(jq -r .version /app/package.json 2>/dev/null || echo "unknown")"
 echo " Mode: $([ "$ADDON_MODE" = true ] && echo "Home Assistant Addon" || echo "Standalone Docker")"
 echo " Node: $(node --version)"
 echo "============================================"
