@@ -8,6 +8,7 @@ async function request(url, options = {}) {
       ...CONFIG.commonHeaders,
       ...options.headers,
     },
+    signal: options.signal || AbortSignal.timeout(30000),
   });
 
   const text = await resp.text();
