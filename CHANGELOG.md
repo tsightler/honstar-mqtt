@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.5.3] - 2026-04-03
+
+### Changed
+- Use timeout on HTTP requests
+
 ## [1.5.2] - 2026-04-03
 
 ### Added
