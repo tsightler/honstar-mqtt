@@ -16,7 +16,7 @@ The application has full support for Home Assistant MQTT discovery, and can run 
 - Lock/Unlock
 - Odometer
 - Tire pressures with warning states
-- Vehicle Location updated on configured interval (3600 seconds by default) or manually triggered (MQTT command/button entity)
+- Vehicle Location (updated on startup, on odometer change, or on-demand via button entity)
 - Home Assistant MQTT discovery (automatic entity creation)
 - Configurable poll interval (900 seconds minimum)
 
@@ -31,7 +31,7 @@ The estimated charge rate is not provided by the API but is calculated based on 
 The API does not return real-time lock state, if you lock the vehicle with the API and someone unlocks it with the keyfob, the unlock state will not be reflected in the app.  Because of this, the Home Assistant lock will only show the lock/unlock state for a few minutes immediately after sending the command, it will then revert to unknown state.  This makes it work easier with voice assistants since you can always tell it to lock/unlock as some devices will not resend the lock/unlock command if it thinks the device is already locked/unlocked.
 
 ### Location
-By default, vehicle location is polled every hour (3600 seconds) as it is a heavy operation and might lead to additional battery drain over time.  The polling interval is configurable via the `LOCATION_INTERVAL` environment variable (minimum 600 seconds, set to 0 to disable automatic polling).  There is also a button entity available to trigger a location update on demand but keep in mind that the location API is limited to one call every 10 minutes.
+Vehicle location is automatically updated on startup and whenever the polling loop detects an odometer change, meaning the vehicle has moved.  There is also a button entity available to trigger a location update on demand.  The location API is limited to one call every 10 minutes.
 
 ## Installation
 
@@ -51,7 +51,6 @@ By default, vehicle location is polled every hour (3600 seconds) as it is a heav
    - **vin** — Your vehicle's VIN (optional, defaults to first vehicle)
    - **mqtt_url** — MQTT broker URL (leave default to auto-discover from the Mosquitto addon)
    - **poll_interval** — Seconds between vehicle polls (minimum/default: 900)
-   - **location_interval** — Seconds between location polls (minimum: 600, default: 3600, 0 to disable)
    - **debug** — Enable debug logging (default: false)
 6. Click **Start**
 
@@ -69,7 +68,6 @@ docker run -d \
   -e VIN="YOUR_VIN" \
   -e MQTT_URL="mqtt://user:password@mqtt-broker:1883" \
   -e POLL_INTERVAL=900 \
-  -e LOCATION_INTERVAL=3600 \
   -e DEBUG=false \
   ghcr.io/tsightler/honstar-mqtt-amd64
 ```
@@ -91,7 +89,6 @@ services:
       - VIN=YOUR_VIN
       - MQTT_URL=mqtt://user:password@mqtt-broker:1883
       - POLL_INTERVAL=900
-      - LOCATION_INTERVAL=3600
       - DEBUG=false
 ```
 
@@ -116,7 +113,6 @@ export HWS_PIN="1234"
 export VIN="YOUR_VIN"
 export MQTT_URL="mqtt://user:password@localhost:1883"
 export POLL_INTERVAL=900
-export LOCATION_INTERVAL=3600
 
 node index.js
 ```
@@ -131,7 +127,6 @@ node index.js
 | `VIN` | No | Vehicle VIN (defaults to first vehicle on account) |
 | `MQTT_URL` | Yes | MQTT broker URL (e.g. `mqtt://user:pass@host:1883`) |
 | `POLL_INTERVAL` | No | Seconds between polls (minimum/default: 900) |
-| `LOCATION_INTERVAL` | No | Seconds between location polls (min: 600, default: 3600, 0 to disable) |
 | `DEBUG` | No | Enable debug logging (default: false) |
 
 ## Home Assistant Entities

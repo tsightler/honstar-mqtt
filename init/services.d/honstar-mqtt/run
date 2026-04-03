@@ -29,7 +29,6 @@ if [ "$ADDON_MODE" = true ]; then
     VIN=$(bashio::config 'vin')
     MQTT_URL=$(bashio::config 'mqtt_url')
     POLL_INTERVAL=$(bashio::config 'poll_interval')
-    LOCATION_INTERVAL=$(bashio::config 'location_interval')
     DEBUG_MODE=$(bashio::config 'debug')
 
     # Resolve auto_* MQTT placeholders using HA services API
@@ -57,7 +56,6 @@ if [ "$ADDON_MODE" = true ]; then
     export VIN="$VIN"
     export MQTT_URL="$MQTT_URL"
     export POLL_INTERVAL="$POLL_INTERVAL"
-    export LOCATION_INTERVAL="$LOCATION_INTERVAL"
     export DEBUG="$DEBUG_MODE"
     export TZ=$(bashio::info.timezone)
 
