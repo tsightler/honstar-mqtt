@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.5.4] - 2026-04-03
+
+### Fixed
+- Fix polling loop hang...again!
+
 ## [1.5.3] - 2026-04-03
 
 ### Changed
