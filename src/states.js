@@ -24,6 +24,8 @@ const chargeState = {
   hadEnoughTime: false,
   lastSoc: null,
   lastIsoTime: null,
+  startSoc: null,
+  startTimestamp: null,
 };
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -117,6 +119,8 @@ function publishStates(brokerClient, vin, dashboard, vehicle) {
         chargeState.hadEnoughTime = false;
         chargeState.lastSoc = null;
         chargeState.lastIsoTime = null;
+        chargeState.startSoc = null;
+        chargeState.startTimestamp = null;
         debug("Charge session started");
       }
 
@@ -136,15 +140,40 @@ function publishStates(brokerClient, vin, dashboard, vehicle) {
 
           if (capacity && !isNaN(currentSoc) && !isNaN(targetSoc) && targetSoc > currentSoc) {
             const hoursRemaining = (new Date(isoTime) - new Date(dashboard.timestamp)) / 3600000;
-            if (hoursRemaining > 0) {
-              const rawKw = ((targetSoc - currentSoc) / 100) * capacity / hoursRemaining;
 
-              // Detect charge type on first valid calculation
-              if (chargeState.isDcfc === null) {
-                const minutesRemaining = hoursRemaining * 60;
-                chargeState.isDcfc = (targetSoc - currentSoc) > 5 && minutesRemaining < 10;
-                debug(`Charge type detected: ${chargeState.isDcfc ? "DCFC" : "L1/L2"}`);
+            // Detect charge type on first valid calculation
+            if (chargeState.isDcfc === null) {
+              const minutesRemaining = hoursRemaining * 60;
+              chargeState.isDcfc = (targetSoc - currentSoc) > 5 && minutesRemaining < 10;
+              debug(`Charge type detected: ${chargeState.isDcfc ? "DCFC" : "L1/L2"}`);
+            }
+
+            // Initialize L2 charge tracking on first calculation
+            if (!chargeState.isDcfc && chargeState.startSoc === null) {
+              chargeState.startSoc = currentSoc;
+              chargeState.startTimestamp = dashboard.timestamp;
+              debug(`L2 charge tracking initialized: startSoc=${currentSoc}%`);
+            }
+
+            let rawKw;
+            if (chargeState.isDcfc) {
+              // DCFC: use vehicle's ETA estimate
+              if (hoursRemaining > 0) {
+                rawKw = ((targetSoc - currentSoc) / 100) * capacity / hoursRemaining;
               }
+            } else {
+              // L2: calculate based on elapsed time since first detection + mid-window offset
+              const elapsedHours = (new Date(dashboard.timestamp) - new Date(chargeState.startTimestamp)) / 3600000;
+              const totalHours = elapsedHours + (7.5 / 60); // Assume charge started 7.5 min before first detection
+              const socGain = currentSoc - chargeState.startSoc;
+
+              if (totalHours > 0 && socGain > 0) {
+                rawKw = (socGain / 100) * capacity / totalHours;
+                debug(`L2 calc: elapsed=${(elapsedHours * 60).toFixed(1)}min socGain=${socGain.toFixed(1)}% total=${(totalHours * 60).toFixed(1)}min`);
+              }
+            }
+
+            if (rawKw && rawKw > 0) {
 
               // Detect stale data: SOC and completion time unchanged from last cycle
               const staleData = chargeState.lastSoc !== null
@@ -208,6 +237,8 @@ function publishStates(brokerClient, vin, dashboard, vehicle) {
       chargeState.hadEnoughTime = false;
       chargeState.lastSoc = null;
       chargeState.lastIsoTime = null;
+      chargeState.startSoc = null;
+      chargeState.startTimestamp = null;
       brokerClient.publish(`honstar-mqtt/${vin}/ev_charge_complete_time/state`, "", opts);
       brokerClient.publish(`honstar-mqtt/${vin}/ev_charge_rate/state`, "0", opts);
     }
