@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.5.5] - 2026-04-04
+
+### Changed
+- More charge rate estimate tweaks
+- Retry location updates on next poll if API fails
+
 ## [1.5.4] - 2026-04-03
 
 ### Fixed
