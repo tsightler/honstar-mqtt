@@ -141,6 +141,11 @@ Once running, the following entities are automatically created via MQTT discover
 | EV Charge State | Binary Sensor | Charging or not |
 | EV Plug State | Binary Sensor | Plugged in or not |
 | EV Target Charge Level | Number | Settable charge target (50-100%) |
+| EV Charge Complete | Sensor | Estimated time until charge complete |
+| EV Charge Rate | Sensor | Estimated charging rate (kW) |
+| Lock | Lock | Lock/unlock vehicle (shows unknown after a few minutes) |
+| Location | Device Tracker | Vehicle GPS location |
+| Update Location | Button | Trigger on-demand location update |
 | Climate Preconditioning | Switch | Start/stop cabin preconditioning |
 | Climate Temperature | Number | Preconditioning target temp (60-90°F) |
 | Tire Pressure (x4) | Sensor | Individual tire pressures (psi) |
@@ -162,7 +167,7 @@ The app follows the same authentication and data flow as the official Honda/Acur
 
 Vehicle data is delivered asynchronously — the REST API triggers a request to the vehicle, and the response arrives over MQTT when the vehicle responds. The gateway then publishes the data to your MQTT broker with Home Assistant discovery configs.
 
-## Notes
+## Technical Notes
 
 - The vehicle must have cellular connectivity to respond to dashboard requests.
 - Climate preconditioning auto-turns off after 60 minutes (vehicle limitation).
