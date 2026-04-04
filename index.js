@@ -166,6 +166,7 @@ Docker:
   let lastLocateTime = 0;
   let lastOdometer = null;
   let needsLocationUpdate = true;
+  let consecutiveFailures = 0;
 
   // Graceful shutdown
   async function shutdown() {
@@ -208,6 +209,16 @@ Docker:
     log(`Using VIN: ${vin}`);
   }
 
+  function needsReauth(msg) {
+    return (
+      msg.includes("401") ||
+      msg.includes("403") ||
+      msg.includes("Auth") ||
+      msg.includes("token") ||
+      msg.includes("association")
+    );
+  }
+
   // Single poll + publish cycle
   async function poll() {
     if (shuttingDown) return;
@@ -216,6 +227,7 @@ Docker:
     try {
       const dashboard = await pollOnce(accessToken, hidasIdent, vin);
       if (dashboard) {
+        consecutiveFailures = 0;
         printDashboard(dashboard);
         publishData(brokerClient, vin, dashboard);
         publishStates(brokerClient, vin, dashboard, vehicle);
@@ -280,16 +292,17 @@ Docker:
       }
     } catch (err) {
       log(`Poll failed: ${err.message}`);
+      consecutiveFailures++;
 
-      if (
-        err.message.includes("401") ||
-        err.message.includes("403") ||
-        err.message.includes("Auth") ||
-        err.message.includes("token")
-      ) {
-        log("Possible auth error, re-authenticating...");
+      if (needsReauth(err.message) || consecutiveFailures >= 3) {
+        log(
+          consecutiveFailures >= 3
+            ? `${consecutiveFailures} consecutive poll failures, re-authenticating...`
+            : "Auth/association error detected, re-authenticating..."
+        );
         try {
           await authenticate();
+          consecutiveFailures = 0;
         } catch (authErr) {
           log(`Re-authentication failed: ${authErr.message}`);
         }
@@ -298,11 +311,24 @@ Docker:
   }
 
   try {
-    // Initial authentication
-    await authenticate();
-
-    // Connect to user's MQTT broker
-    brokerClient = await connectBroker(mqttUrl);
+    // Initial authentication + broker connection with retry
+    while (!shuttingDown) {
+      try {
+        await authenticate();
+        brokerClient = await connectBroker(mqttUrl);
+        break;
+      } catch (err) {
+        log(`Startup error: ${err.message}`);
+        if (brokerClient) {
+          try { await new Promise((r) => brokerClient.end(false, {}, r)); } catch {}
+          brokerClient = null;
+        }
+        if (shuttingDown) break;
+        log(`Retrying in ${pollInterval}s...`);
+        await new Promise((r) => setTimeout(r, pollInterval * 1000));
+      }
+    }
+    if (shuttingDown) { await shutdown(); return; }
 
     // Publish HA discovery configs and availability
     publishDiscovery(brokerClient, vin, vehicle);
@@ -531,13 +557,8 @@ Docker:
           );
         }
 
-        if (
-          err.message.includes("401") ||
-          err.message.includes("403") ||
-          err.message.includes("Auth") ||
-          err.message.includes("token")
-        ) {
-          log("Possible auth error, re-authenticating...");
+        if (needsReauth(err.message)) {
+          log("Auth/association error detected, re-authenticating...");
           try {
             await authenticate();
           } catch (authErr) {
@@ -614,13 +635,8 @@ Docker:
           mqttOpts
         );
 
-        if (
-          err.message.includes("401") ||
-          err.message.includes("403") ||
-          err.message.includes("Auth") ||
-          err.message.includes("token")
-        ) {
-          log("Possible auth error, re-authenticating...");
+        if (needsReauth(err.message)) {
+          log("Auth/association error detected, re-authenticating...");
           try {
             await authenticate();
           } catch (authErr) {
@@ -680,13 +696,8 @@ Docker:
         // Clear state on failure
         brokerClient.publish(lockStateTopic, "None", mqttOpts);
 
-        if (
-          err.message.includes("401") ||
-          err.message.includes("403") ||
-          err.message.includes("Auth") ||
-          err.message.includes("token")
-        ) {
-          log("Possible auth error, re-authenticating...");
+        if (needsReauth(err.message)) {
+          log("Auth/association error detected, re-authenticating...");
           try {
             await authenticate();
           } catch (authErr) {
@@ -742,13 +753,8 @@ Docker:
       } catch (err) {
         log(`Locate vehicle command failed: ${err.message}`);
 
-        if (
-          err.message.includes("401") ||
-          err.message.includes("403") ||
-          err.message.includes("Auth") ||
-          err.message.includes("token")
-        ) {
-          log("Possible auth error, re-authenticating...");
+        if (needsReauth(err.message)) {
+          log("Auth/association error detected, re-authenticating...");
           try {
             await authenticate();
           } catch (authErr) {
