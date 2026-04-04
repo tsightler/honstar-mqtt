@@ -164,8 +164,8 @@ Docker:
   let lockStateTimer = null;
   let pendingLocateCmd = null;
   let lastLocateTime = 0;
-  let lastLocation = null;
   let lastOdometer = null;
+  let needsLocationUpdate = true;
 
   // Graceful shutdown
   async function shutdown() {
@@ -258,11 +258,14 @@ Docker:
           }
         }
 
-        // Auto-locate when odometer changes (vehicle has moved)
+        // Auto-locate: if location update needed or odometer changed
         const currentOdometer = dashboard.odometer?.value;
-        if (currentOdometer != null) {
-          if (lastOdometer != null && currentOdometer !== lastOdometer && pin) {
+        if (pin && currentOdometer != null) {
+          if (lastOdometer != null && currentOdometer !== lastOdometer) {
             log(`Odometer changed (${lastOdometer} -> ${currentOdometer}), queuing location update`);
+            needsLocationUpdate = true;
+          }
+          if (needsLocationUpdate) {
             pendingLocateCmd = "PRESS";
           }
           lastOdometer = currentOdometer;
@@ -721,19 +724,20 @@ Docker:
 
         if (result?.gpsData?.coordinate) {
           const gps = result.gpsData.coordinate;
-          lastLocation = {
+          const location = {
             latitude: gps.latitude,
             longitude: gps.longitude,
             timestamp: result.gpsData.dtTime || new Date().toISOString(),
           };
           brokerClient.publish(
             `honstar-mqtt/${vin}/location/state`,
-            JSON.stringify(lastLocation),
+            JSON.stringify(location),
             mqttOpts
           );
           log(
             `Published vehicle location: ${gps.latitude}, ${gps.longitude}`
           );
+          needsLocationUpdate = false;
         }
       } catch (err) {
         log(`Locate vehicle command failed: ${err.message}`);
