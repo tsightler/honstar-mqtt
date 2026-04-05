@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.6] - 2026-04-05
+
+### Changed
+- New charge rate estimator
+- More robust recovery from API failures
+- Update README.md
+
 ## [1.5.5] - 2026-04-04
 
 ### Changed
