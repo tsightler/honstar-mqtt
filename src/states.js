@@ -12,23 +12,39 @@ const TIRE_POSITIONS = {
   rearRight:  { slug: "tire_pressure_rr", placard: "placardRear" },
 };
 
-const L2_MAX_KW = 11;
+// Standard charger rates (DC power to battery after conversion losses)
+const L2_RATES_KW = [10.4, 8.6, 6.9, 5.2, 3.5]; // 48A, 40A, 32A, 24A, 16A @ 240V, 90% eff
+const L1_RATES_KW = [1.5, 1.2, 0.8];            // 16A, 12A, 8A @ 120V, 80% eff
 
 // Charge rate tracking state (persists across poll cycles)
 const chargeState = {
   active: false,
   isDcfc: null,
-  lastRawKw: null,
-  averageKw: null,
-  locked: false,
-  hadEnoughTime: false,
+  samples: [],        // Rolling window of raw kW calculations
+  snappedKw: null,    // The locked-in standard rate
   lastSoc: null,
   lastIsoTime: null,
-  startSoc: null,
-  startTimestamp: null,
 };
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+function snapToStandardRate(rawKw) {
+  const rates = rawKw < 3 ? L1_RATES_KW : L2_RATES_KW;
+
+  // Find closest rate
+  let closest = rates[0];
+  let minDiff = Math.abs(rawKw - closest);
+
+  for (const rate of rates) {
+    const diff = Math.abs(rawKw - rate);
+    if (diff < minDiff) {
+      minDiff = diff;
+      closest = rate;
+    }
+  }
+
+  return closest;
+}
 
 function resolveChargeCompleteTime(ct, responseTimestamp) {
   const now = new Date(responseTimestamp);
@@ -113,14 +129,10 @@ function publishStates(brokerClient, vin, dashboard, vehicle) {
       if (!chargeState.active) {
         chargeState.active = true;
         chargeState.isDcfc = null;
-        chargeState.lastRawKw = null;
-        chargeState.averageKw = null;
-        chargeState.locked = false;
-        chargeState.hadEnoughTime = false;
+        chargeState.samples = [];
+        chargeState.snappedKw = null;
         chargeState.lastSoc = null;
         chargeState.lastIsoTime = null;
-        chargeState.startSoc = null;
-        chargeState.startTimestamp = null;
         debug("Charge session started");
       }
 
@@ -148,33 +160,13 @@ function publishStates(brokerClient, vin, dashboard, vehicle) {
               debug(`Charge type detected: ${chargeState.isDcfc ? "DCFC" : "L1/L2"}`);
             }
 
-            // Initialize L2 charge tracking on first calculation
-            if (!chargeState.isDcfc && chargeState.startSoc === null) {
-              chargeState.startSoc = currentSoc;
-              chargeState.startTimestamp = dashboard.timestamp;
-              debug(`L2 charge tracking initialized: startSoc=${currentSoc}%`);
-            }
-
             let rawKw;
-            if (chargeState.isDcfc) {
-              // DCFC: use vehicle's ETA estimate
-              if (hoursRemaining > 0) {
-                rawKw = ((targetSoc - currentSoc) / 100) * capacity / hoursRemaining;
-              }
-            } else {
-              // L2: calculate based on elapsed time since first detection + mid-window offset
-              const elapsedHours = (new Date(dashboard.timestamp) - new Date(chargeState.startTimestamp)) / 3600000;
-              const totalHours = elapsedHours + (7.5 / 60); // Assume charge started 7.5 min before first detection
-              const socGain = currentSoc - chargeState.startSoc;
-
-              if (totalHours > 0 && socGain > 0) {
-                rawKw = (socGain / 100) * capacity / totalHours;
-                debug(`L2 calc: elapsed=${(elapsedHours * 60).toFixed(1)}min socGain=${socGain.toFixed(1)}% total=${(totalHours * 60).toFixed(1)}min`);
-              }
+            if (hoursRemaining > 0) {
+              // Calculate raw kW from ETA
+              rawKw = ((targetSoc - currentSoc) / 100) * capacity / hoursRemaining;
             }
 
             if (rawKw && rawKw > 0) {
-
               // Detect stale data: SOC and completion time unchanged from last cycle
               const staleData = chargeState.lastSoc !== null
                 && currentSoc === chargeState.lastSoc
@@ -182,44 +174,53 @@ function publishStates(brokerClient, vin, dashboard, vehicle) {
               chargeState.lastSoc = currentSoc;
               chargeState.lastIsoTime = isoTime;
 
-              if (staleData && chargeState.averageKw !== null) {
-                debug("Stale SOC/ETA detected, holding charge rate");
-              }
-
               let kw;
               if (chargeState.isDcfc) {
-                // DCFC: report raw calculated rate
+                // DCFC: just round to nearest integer
                 kw = Math.round(rawKw);
-              } else if (chargeState.locked || (staleData && chargeState.averageKw !== null)) {
-                // L1/L2 locked: stale data or time remaining dropped below 30 min
-                kw = Math.round(Math.min(chargeState.averageKw, L2_MAX_KW) * 10) / 10;
               } else {
-                // L1/L2: average of last two samples
-                if (chargeState.lastRawKw === null) {
-                  chargeState.averageKw = rawKw;
-                } else {
-                  chargeState.averageKw = (chargeState.lastRawKw + rawKw) / 2;
-                }
-                chargeState.lastRawKw = rawKw;
-
-                const minutesRemaining = hoursRemaining * 60;
-                // Track whether we ever had >= 30 min remaining
-                if (minutesRemaining >= 30) chargeState.hadEnoughTime = true;
-                // Lock once time drops below 30 min (only if it was above 30 at some point)
-                if (chargeState.hadEnoughTime && minutesRemaining < 30) {
-                  chargeState.locked = true;
-                  debug("Charge rate locked (< 30 min remaining)");
+                // L1/L2: use rolling average and snap to standard rates
+                if (!staleData) {
+                  // Add new sample to rolling window
+                  chargeState.samples.push(rawKw);
+                  // Keep last 6 samples (90 minutes of data at 15 min polls)
+                  if (chargeState.samples.length > 6) {
+                    chargeState.samples.shift();
+                  }
                 }
 
-                kw = Math.round(Math.min(chargeState.averageKw, L2_MAX_KW) * 10) / 10;
+                if (chargeState.samples.length > 0) {
+                  // Calculate average of samples
+                  const avgRaw = chargeState.samples.reduce((a, b) => a + b, 0) / chargeState.samples.length;
+
+                  // Snap to standard rate
+                  const snapped = snapToStandardRate(avgRaw);
+
+                  // Lock in the rate once we have enough samples (3+)
+                  if (chargeState.snappedKw === null || chargeState.samples.length < 3) {
+                    chargeState.snappedKw = snapped;
+                  }
+                  // Allow adjustments if average has shifted significantly
+                  else if (Math.abs(snapped - chargeState.snappedKw) > 1.5) {
+                    chargeState.snappedKw = snapped;
+                    debug(`Charge rate adjusted to ${snapped}kW based on new average`);
+                  }
+
+                  kw = chargeState.snappedKw;
+                }
               }
 
-              debug(`Charge rate: raw=${rawKw.toFixed(1)}kW avg=${chargeState.averageKw != null ? chargeState.averageKw.toFixed(1) : "n/a"}kW published=${kw}kW`);
-              brokerClient.publish(
-                `honstar-mqtt/${vin}/ev_charge_rate/state`,
-                String(kw),
-                opts
-              );
+              if (kw !== undefined) {
+                const avgStr = chargeState.samples.length > 0
+                  ? (chargeState.samples.reduce((a,b)=>a+b,0)/chargeState.samples.length).toFixed(1)
+                  : 'n/a';
+                debug(`Charge rate: raw=${rawKw.toFixed(1)}kW samples=${chargeState.samples.length} avg=${avgStr}kW published=${kw}kW`);
+                brokerClient.publish(
+                  `honstar-mqtt/${vin}/ev_charge_rate/state`,
+                  String(kw),
+                  opts
+                );
+              }
             }
           }
         }
@@ -231,14 +232,10 @@ function publishStates(brokerClient, vin, dashboard, vehicle) {
       }
       chargeState.active = false;
       chargeState.isDcfc = null;
-      chargeState.lastRawKw = null;
-      chargeState.averageKw = null;
-      chargeState.locked = false;
-      chargeState.hadEnoughTime = false;
+      chargeState.samples = [];
+      chargeState.snappedKw = null;
       chargeState.lastSoc = null;
       chargeState.lastIsoTime = null;
-      chargeState.startSoc = null;
-      chargeState.startTimestamp = null;
       brokerClient.publish(`honstar-mqtt/${vin}/ev_charge_complete_time/state`, "", opts);
       brokerClient.publish(`honstar-mqtt/${vin}/ev_charge_rate/state`, "0", opts);
     }
