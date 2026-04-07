@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.5.8] - 2026-04-07
+
+### Changed
+- Fallback to calculated value when stale SOC data is detected
+
 ## [1.5.7] - 2026-04-07
 
 ### Changed
