@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.5.9] - 2026-04-07
+
+### Changed
+- Timezone detection fixes
+
 ## [1.5.8] - 2026-04-07
 
 ### Changed
