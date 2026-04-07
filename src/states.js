@@ -1,4 +1,6 @@
 const { log, debug } = require("./config");
+const geoTz = require("geo-tz");
+const { zonedTimeToUtc, utcToZonedTime, format } = require("date-fns-tz");
 
 function getBatteryCapacity(vehicle) {
   const model = vehicle?.ModelCode?.toUpperCase() || "";
@@ -26,6 +28,12 @@ const chargeState = {
   lastIsoTime: null,
 };
 
+// Vehicle location state for timezone detection
+const vehicleState = {
+  timezone: null,
+  lastLocation: null,
+};
+
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
 function snapToStandardRate(rawKw) {
@@ -46,7 +54,7 @@ function snapToStandardRate(rawKw) {
   return closest;
 }
 
-function resolveChargeCompleteTime(ct, responseTimestamp) {
+function resolveChargeCompleteTime(ct, responseTimestamp, vehicleTimezone = null) {
   const now = new Date(responseTimestamp);
   const targetDayIdx = DAYS.indexOf(ct.day);
   if (targetDayIdx === -1) return null;
@@ -55,16 +63,54 @@ function resolveChargeCompleteTime(ct, responseTimestamp) {
   const minute = parseInt(ct.minute);
   if (isNaN(hour) || isNaN(minute)) return null;
 
-  const candidate = new Date(now);
-  let daysAhead = targetDayIdx - candidate.getDay();
+  // Use vehicle timezone if available, otherwise fall back to server timezone
+  const tz = vehicleTimezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+  // Convert UTC timestamp to vehicle's local time
+  const nowInVehicleTz = utcToZonedTime(now, tz);
+  const currentDayIdx = nowInVehicleTz.getDay();
+
+  // Calculate days ahead
+  let daysAhead = targetDayIdx - currentDayIdx;
   if (daysAhead < 0) daysAhead += 7;
 
+  // Create a date in vehicle timezone for the completion time
+  const candidate = new Date(nowInVehicleTz);
   candidate.setDate(candidate.getDate() + daysAhead);
   candidate.setHours(hour, minute, 0, 0);
 
-  if (candidate <= now) candidate.setDate(candidate.getDate() + 7);
+  // If completion time is in the past, add a week
+  if (candidate <= nowInVehicleTz) {
+    candidate.setDate(candidate.getDate() + 7);
+  }
 
-  return candidate.toISOString();
+  // Convert from vehicle timezone to UTC
+  const utcTime = zonedTimeToUtc(candidate, tz);
+
+  return utcTime.toISOString();
+}
+
+function updateVehicleLocation(latitude, longitude) {
+  // Only update timezone if location changed significantly (> 0.5 degrees ~ 55km)
+  if (
+    !vehicleState.lastLocation ||
+    Math.abs(latitude - vehicleState.lastLocation.lat) > 0.5 ||
+    Math.abs(longitude - vehicleState.lastLocation.lon) > 0.5
+  ) {
+    try {
+      const timezones = geoTz.find(latitude, longitude);
+      if (timezones && timezones.length > 0) {
+        const newTimezone = timezones[0];
+        if (vehicleState.timezone !== newTimezone) {
+          vehicleState.timezone = newTimezone;
+          debug(`Vehicle timezone updated: ${newTimezone}`);
+        }
+        vehicleState.lastLocation = { lat: latitude, lon: longitude };
+      }
+    } catch (err) {
+      debug(`Failed to detect timezone: ${err.message}`);
+    }
+  }
 }
 
 function publishAvailability(brokerClient, vin, available) {
@@ -137,7 +183,11 @@ function publishStates(brokerClient, vin, dashboard, vehicle) {
       }
 
       if (dashboard.chargeCompleteTime?.hour != null && dashboard.timestamp) {
-        const isoTime = resolveChargeCompleteTime(dashboard.chargeCompleteTime, dashboard.timestamp);
+        const isoTime = resolveChargeCompleteTime(
+          dashboard.chargeCompleteTime,
+          dashboard.timestamp,
+          vehicleState.timezone
+        );
         if (isoTime) {
           brokerClient.publish(
             `honstar-mqtt/${vin}/ev_charge_complete_time/state`,
@@ -278,4 +328,4 @@ function publishStates(brokerClient, vin, dashboard, vehicle) {
   log("Published HA entity states");
 }
 
-module.exports = { publishAvailability, publishStates };
+module.exports = { publishAvailability, publishStates, updateVehicleLocation };

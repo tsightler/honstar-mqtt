@@ -454,7 +454,7 @@ async function locateVehicle(
   accessToken,
   vin,
   pin,
-  { maxAttempts = 3, verifyTimeout = 60000 } = {}
+  { maxAttempts = 3, verifyTimeout = 120000 } = {}
 ) {
   log("Locating vehicle...");
 

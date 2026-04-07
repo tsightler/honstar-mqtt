@@ -24,7 +24,7 @@ const { connectAwsMqtt, subscribeAwsTopic } = require("./src/aws-mqtt");
 const { connectBroker, publishData } = require("./src/broker");
 const { parseDashboard, printDashboard } = require("./src/dashboard");
 const { publishDiscovery } = require("./src/discovery");
-const { publishAvailability, publishStates } = require("./src/states");
+const { publishAvailability, publishStates, updateVehicleLocation } = require("./src/states");
 const {
   setTargetChargeLevel,
   startClimate,
@@ -740,6 +740,10 @@ Docker:
             longitude: gps.longitude,
             timestamp: result.gpsData.dtTime || new Date().toISOString(),
           };
+
+          // Update vehicle timezone based on location
+          updateVehicleLocation(gps.latitude, gps.longitude);
+
           brokerClient.publish(
             `honstar-mqtt/${vin}/location/state`,
             JSON.stringify(location),

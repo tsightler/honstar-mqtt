@@ -8,7 +8,9 @@
     "release": "node scripts/release.js"
   },
   "dependencies": {
+    "date-fns-tz": "^3.2.0",
     "dotenv": "^16.4.0",
+    "geo-tz": "^8.1.1",
     "mqtt": "^5.10.0",
     "uuid": "^11.1.0"
   },
