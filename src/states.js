@@ -1,6 +1,6 @@
 const { log, debug } = require("./config");
 const geoTz = require("geo-tz");
-const { zonedTimeToUtc, utcToZonedTime } = require("date-fns-tz");
+const { toZonedTime, fromZonedTime } = require("date-fns-tz");
 
 function getBatteryCapacity(vehicle) {
   const model = vehicle?.ModelCode?.toUpperCase() || "";
@@ -63,31 +63,47 @@ function resolveChargeCompleteTime(ct, responseTimestamp, vehicleTimezone = null
   const minute = parseInt(ct.minute);
   if (isNaN(hour) || isNaN(minute)) return null;
 
-  // Use vehicle timezone if available, otherwise fall back to server timezone
-  const tz = vehicleTimezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
+  try {
+    // Use vehicle timezone if available, otherwise fall back to server timezone
+    const tz = vehicleTimezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
 
-  // Convert UTC timestamp to vehicle's local time
-  const nowInVehicleTz = utcToZonedTime(now, tz);
-  const currentDayIdx = nowInVehicleTz.getDay();
+    // Convert UTC timestamp to vehicle's local time
+    const nowInVehicleTz = toZonedTime(now, tz);
+    const currentDayIdx = nowInVehicleTz.getDay();
 
-  // Calculate days ahead
-  let daysAhead = targetDayIdx - currentDayIdx;
-  if (daysAhead < 0) daysAhead += 7;
+    // Calculate days ahead
+    let daysAhead = targetDayIdx - currentDayIdx;
+    if (daysAhead < 0) daysAhead += 7;
 
-  // Create a date in vehicle timezone for the completion time
-  const candidate = new Date(nowInVehicleTz);
-  candidate.setDate(candidate.getDate() + daysAhead);
-  candidate.setHours(hour, minute, 0, 0);
+    // Create a date in vehicle timezone for the completion time
+    const candidate = new Date(nowInVehicleTz);
+    candidate.setDate(candidate.getDate() + daysAhead);
+    candidate.setHours(hour, minute, 0, 0);
 
-  // If completion time is in the past, add a week
-  if (candidate <= nowInVehicleTz) {
-    candidate.setDate(candidate.getDate() + 7);
+    // If completion time is in the past, add a week
+    if (candidate <= nowInVehicleTz) {
+      candidate.setDate(candidate.getDate() + 7);
+    }
+
+    // Convert from vehicle timezone to UTC
+    const utcTime = fromZonedTime(candidate, tz);
+
+    return utcTime.toISOString();
+  } catch (err) {
+    debug(`Timezone conversion failed: ${err.message}, falling back to simple calculation`);
+
+    // Fallback: use simple server timezone calculation
+    const candidate = new Date(now);
+    let daysAhead = targetDayIdx - candidate.getDay();
+    if (daysAhead < 0) daysAhead += 7;
+
+    candidate.setDate(candidate.getDate() + daysAhead);
+    candidate.setHours(hour, minute, 0, 0);
+
+    if (candidate <= now) candidate.setDate(candidate.getDate() + 7);
+
+    return candidate.toISOString();
   }
-
-  // Convert from vehicle timezone to UTC
-  const utcTime = zonedTimeToUtc(candidate, tz);
-
-  return utcTime.toISOString();
 }
 
 function updateVehicleLocation(latitude, longitude) {
@@ -98,17 +114,25 @@ function updateVehicleLocation(latitude, longitude) {
     Math.abs(longitude - vehicleState.lastLocation.lon) > 0.5
   ) {
     try {
-      const timezones = geoTz.find(latitude, longitude);
-      if (timezones && timezones.length > 0) {
-        const newTimezone = timezones[0];
-        if (vehicleState.timezone !== newTimezone) {
-          vehicleState.timezone = newTimezone;
-          debug(`Vehicle timezone updated: ${newTimezone}`);
+      // Use setImmediate to prevent blocking the event loop
+      setImmediate(() => {
+        try {
+          const timezones = geoTz.find(latitude, longitude);
+          if (timezones && timezones.length > 0) {
+            const newTimezone = timezones[0];
+            if (vehicleState.timezone !== newTimezone) {
+              vehicleState.timezone = newTimezone;
+              log(`Vehicle timezone detected: ${newTimezone}`);
+            }
+            vehicleState.lastLocation = { lat: latitude, lon: longitude };
+          }
+        } catch (err) {
+          log(`Failed to detect timezone: ${err.message}`);
+          // Continue with server timezone as fallback
         }
-        vehicleState.lastLocation = { lat: latitude, lon: longitude };
-      }
+      });
     } catch (err) {
-      debug(`Failed to detect timezone: ${err.message}`);
+      log(`Failed to schedule timezone detection: ${err.message}`);
     }
   }
 }
@@ -140,8 +164,8 @@ function publishStates(brokerClient, vin, dashboard, vehicle) {
 
       if (socDiff > 3) {
         debug(
-          `Stale SOC detected: reported=${dashboard.battery.stateOfCharge.toFixed(1)}% ` +
-          `estimated=${estimatedSoc.toFixed(1)}% (diff=${socDiff.toFixed(1)}%) - using estimated value`
+          `Stale SOC detected: reported=${Number(dashboard.battery.stateOfCharge).toFixed(1)}% ` +
+          `estimated=${Number(estimatedSoc).toFixed(1)}% (diff=${Number(socDiff).toFixed(1)}%) - using estimated value`
         );
         socToPublish = estimatedSoc;
       }
