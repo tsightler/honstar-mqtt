@@ -1,6 +1,6 @@
 const { log, debug } = require("./config");
 const geoTz = require("geo-tz");
-const { zonedTimeToUtc, utcToZonedTime, format } = require("date-fns-tz");
+const { zonedTimeToUtc, utcToZonedTime } = require("date-fns-tz");
 
 function getBatteryCapacity(vehicle) {
   const model = vehicle?.ModelCode?.toUpperCase() || "";
@@ -125,9 +125,31 @@ function publishStates(brokerClient, vin, dashboard, vehicle) {
   const opts = { retain: true, qos: 1 };
 
   if (dashboard.battery?.stateOfCharge != null) {
+    let socToPublish = dashboard.battery.stateOfCharge;
+
+    // Detect stale SOC by comparing to range-based estimate
+    if (
+      dashboard.projectedRangeAtTarget?.value &&
+      dashboard.chargeSettings?.targetLevel &&
+      dashboard.battery?.range != null
+    ) {
+      const milesPerPercent =
+        dashboard.projectedRangeAtTarget.value / dashboard.chargeSettings.targetLevel;
+      const estimatedSoc = dashboard.battery.range / milesPerPercent;
+      const socDiff = Math.abs(estimatedSoc - dashboard.battery.stateOfCharge);
+
+      if (socDiff > 3) {
+        debug(
+          `Stale SOC detected: reported=${dashboard.battery.stateOfCharge.toFixed(1)}% ` +
+          `estimated=${estimatedSoc.toFixed(1)}% (diff=${socDiff.toFixed(1)}%) - using estimated value`
+        );
+        socToPublish = estimatedSoc;
+      }
+    }
+
     brokerClient.publish(
       `honstar-mqtt/${vin}/ev_battery_level/state`,
-      String(Math.round(dashboard.battery.stateOfCharge)),
+      String(Math.round(socToPublish)),
       opts
     );
   }
