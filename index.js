@@ -17,10 +17,9 @@ const {
   registerClient,
   generateToken,
   getVehicles,
-  getCigToken,
   requestDashboard,
 } = require("./src/api");
-const { connectAwsMqtt, subscribeAwsTopic } = require("./src/aws-mqtt");
+const { initAwsMqtt, getAwsClient, closeAwsMqtt, subscribeAwsTopic } = require("./src/aws-mqtt");
 const { connectBroker, publishData } = require("./src/broker");
 const { parseDashboard, printDashboard } = require("./src/dashboard");
 const { publishDiscovery } = require("./src/discovery");
@@ -36,68 +35,59 @@ const {
 
 // ─── Poll Cycle ──────────────────────────────────────────────────────────────
 
-async function pollOnce(accessToken, hidasIdent, vin) {
-  const { cigToken, cigSignature } = await getCigToken(
-    accessToken,
-    hidasIdent,
-    vin
-  );
-  const awsClient = await connectAwsMqtt(vin, cigToken, cigSignature);
+async function pollOnce(accessToken, vin) {
+  const awsClient = await getAwsClient();
 
-  try {
-    const dashTopic = `$aws/things/thing_${vin}/shadow/name/DASHBOARD_ASYNC/update`;
-    await subscribeAwsTopic(awsClient, dashTopic);
+  const dashTopic = `$aws/things/thing_${vin}/shadow/name/DASHBOARD_ASYNC/update`;
+  await subscribeAwsTopic(awsClient, dashTopic);
 
-    const cancelSignal = { cancelled: false };
+  const cancelSignal = { cancelled: false };
 
-    const dashboardPromise = new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
+  const dashboardPromise = new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      cancelSignal.cancelled = true;
+      awsClient.removeListener("message", handler);
+      reject(new Error("Timed out waiting for dashboard data (60s)"));
+    }, 60000);
+
+    function handler(topic, message) {
+      if (!topic.includes("DASHBOARD_ASYNC")) return;
+      debug(`Received MQTT message on: ${topic}`);
+      const payload = message.toString();
+      const dashboard = parseDashboard(payload);
+      if (dashboard) {
         cancelSignal.cancelled = true;
+        clearTimeout(timeout);
         awsClient.removeListener("message", handler);
-        reject(new Error("Timed out waiting for dashboard data (60s)"));
-      }, 60000);
-
-      function handler(topic, message) {
-        if (!topic.includes("DASHBOARD_ASYNC")) return;
-        debug(`Received MQTT message on: ${topic}`);
-        const payload = message.toString();
-        const dashboard = parseDashboard(payload);
-        if (dashboard) {
-          cancelSignal.cancelled = true;
-          clearTimeout(timeout);
-          awsClient.removeListener("message", handler);
-          resolve(dashboard);
-        }
+        resolve(dashboard);
       }
+    }
 
-      awsClient.on("message", handler);
-    });
+    awsClient.on("message", handler);
+  });
 
-    await requestDashboard(accessToken, vin, { cancelSignal });
+  await requestDashboard(accessToken, vin, { cancelSignal });
 
-    const retryTimer = setInterval(async () => {
-      if (cancelSignal.cancelled) {
-        clearInterval(retryTimer);
-        return;
-      }
-      debug("Re-requesting dashboard...");
-      try {
-        await requestDashboard(accessToken, vin, {
-          maxRetries: 2,
-          retryDelay: 3000,
-          cancelSignal,
-        });
-      } catch (err) {
-        debug(`Retry cycle failed: ${err.message}`);
-      }
-    }, 10000);
+  const retryTimer = setInterval(async () => {
+    if (cancelSignal.cancelled) {
+      clearInterval(retryTimer);
+      return;
+    }
+    debug("Re-requesting dashboard...");
+    try {
+      await requestDashboard(accessToken, vin, {
+        maxRetries: 2,
+        retryDelay: 3000,
+        cancelSignal,
+      });
+    } catch (err) {
+      debug(`Retry cycle failed: ${err.message}`);
+    }
+  }, 10000);
 
-    const dashboard = await dashboardPromise;
-    clearInterval(retryTimer);
-    return dashboard;
-  } finally {
-    awsClient.end(true);
-  }
+  const dashboard = await dashboardPromise;
+  clearInterval(retryTimer);
+  return dashboard;
 }
 
 // ─── Main ────────────────────────────────────────────────────────────────────
@@ -178,6 +168,8 @@ Docker:
     if (climateOffTimer) clearTimeout(climateOffTimer);
     if (lockStateTimer) clearTimeout(lockStateTimer);
 
+    closeAwsMqtt();
+
     if (brokerClient) {
       if (vin) {
         publishAvailability(brokerClient, vin, false);
@@ -207,6 +199,8 @@ Docker:
     vehicle = vehicles.find((v) => v.VIN === targetVin) || vehicles[0];
     vin = vehicle.VIN;
     log(`Using VIN: ${vin}`);
+
+    initAwsMqtt(() => ({ accessToken, hidasIdent, vin }));
   }
 
   function needsReauth(msg) {
@@ -225,7 +219,7 @@ Docker:
 
     log("Starting poll cycle...");
     try {
-      const dashboard = await pollOnce(accessToken, hidasIdent, vin);
+      const dashboard = await pollOnce(accessToken, vin);
       if (dashboard) {
         consecutiveFailures = 0;
         printDashboard(dashboard);
@@ -525,15 +519,8 @@ Docker:
       brokerClient.publish(stateTopic, String(value), mqttOpts);
       log(`Optimistically set target charge level state to ${value}%`);
 
-      let awsClient;
       try {
-        const { cigToken, cigSignature } = await getCigToken(
-          accessToken,
-          hidasIdent,
-          vin
-        );
-        awsClient = await connectAwsMqtt(vin, cigToken, cigSignature);
-
+        const awsClient = await getAwsClient();
         await setTargetChargeLevel(awsClient, accessToken, vin, value);
 
         // Command accepted — enter optimistic mode for 15 minutes
@@ -566,7 +553,6 @@ Docker:
           }
         }
       } finally {
-        if (awsClient) awsClient.end(true);
         busy = false;
       }
 
@@ -583,14 +569,8 @@ Docker:
       brokerClient.publish(climateStateTopic, cmd, mqttOpts);
       log(`Optimistically set climate state to ${cmd}`);
 
-      let awsClient;
       try {
-        const { cigToken, cigSignature } = await getCigToken(
-          accessToken,
-          hidasIdent,
-          vin
-        );
-        awsClient = await connectAwsMqtt(vin, cigToken, cigSignature);
+        const awsClient = await getAwsClient();
 
         if (cmd === "ON") {
           await startClimate(
@@ -644,7 +624,6 @@ Docker:
           }
         }
       } finally {
-        if (awsClient) awsClient.end(true);
         busy = false;
       }
 
@@ -665,14 +644,8 @@ Docker:
         mqttOpts
       );
 
-      let awsClient;
       try {
-        const { cigToken, cigSignature } = await getCigToken(
-          accessToken,
-          hidasIdent,
-          vin
-        );
-        awsClient = await connectAwsMqtt(vin, cigToken, cigSignature);
+        const awsClient = await getAwsClient();
 
         if (cmd === "LOCK") {
           await lockDoors(awsClient, accessToken, vin, pin);
@@ -705,7 +678,6 @@ Docker:
           }
         }
       } finally {
-        if (awsClient) awsClient.end(true);
         busy = false;
       }
 
@@ -717,14 +689,8 @@ Docker:
       pendingLocateCmd = null;
       lastLocateTime = Date.now();
 
-      let awsClient;
       try {
-        const { cigToken, cigSignature } = await getCigToken(
-          accessToken,
-          hidasIdent,
-          vin
-        );
-        awsClient = await connectAwsMqtt(vin, cigToken, cigSignature);
+        const awsClient = await getAwsClient();
 
         const result = await locateVehicle(
           awsClient,
@@ -766,7 +732,6 @@ Docker:
           }
         }
       } finally {
-        if (awsClient) awsClient.end(true);
         busy = false;
       }
 
