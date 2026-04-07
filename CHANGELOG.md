@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.5.7] - 2026-04-07
+
+### Changed
+- Detect timezone via vehicle location
+- Updated logos
+
 ## [1.5.6] - 2026-04-05
 
 ### Changed
