@@ -108,7 +108,7 @@ function printDashboard(dashboard) {
 
   if (dashboard.battery) {
     console.log("\n  BATTERY & CHARGING");
-    console.log(`     Charge:        ${dashboard.battery.stateOfCharge}%`);
+    console.log(`     Charge:        ${Math.round(dashboard.battery.stateOfCharge)}%`);
     console.log(
       `     Range:         ${dashboard.battery.range} ${dashboard.battery.rangeUnit}`
     );

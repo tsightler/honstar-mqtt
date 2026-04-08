@@ -162,7 +162,7 @@ function correctStaleSoc(dashboard) {
         `Stale SOC detected: reported=${Number(dashboard.battery.stateOfCharge).toFixed(1)}% ` +
         `estimated=${Number(estimatedSoc).toFixed(1)}% (diff=${Number(socDiff).toFixed(1)}%) - using estimated value`
       );
-      dashboard.battery.stateOfCharge = estimatedSoc;
+      dashboard.battery.stateOfCharge = Math.round(estimatedSoc * 10) / 10;
     }
   }
 }
