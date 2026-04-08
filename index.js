@@ -154,7 +154,8 @@ Docker:
   let vehicle = null;
   let pollTimer = null;
   let shuttingDown = false;
-  let busy = false;
+  const activeOps = new Set();
+  let reauthPromise = null;
   let pendingChargeLevel = null;
   let lastReportedTargetLevel = null;
   let optimisticTargetLevel = null;
@@ -224,6 +225,22 @@ Docker:
       msg.includes("token") ||
       msg.includes("association")
     );
+  }
+
+  async function handleReauth(errMessage) {
+    if (!needsReauth(errMessage)) return;
+    if (reauthPromise) return reauthPromise;
+    log("Auth/association error detected, re-authenticating...");
+    reauthPromise = (async () => {
+      try {
+        await authenticate();
+      } catch (authErr) {
+        log(`Re-authentication failed: ${authErr.message}`);
+      } finally {
+        reauthPromise = null;
+      }
+    })();
+    return reauthPromise;
   }
 
   // Single poll + publish cycle
@@ -301,18 +318,16 @@ Docker:
       log(`Poll failed: ${err.message}`);
       consecutiveFailures++;
 
-      if (needsReauth(err.message) || consecutiveFailures >= 3) {
-        log(
-          consecutiveFailures >= 3
-            ? `${consecutiveFailures} consecutive poll failures, re-authenticating...`
-            : "Auth/association error detected, re-authenticating..."
-        );
+      if (consecutiveFailures >= 3) {
+        log(`${consecutiveFailures} consecutive poll failures, re-authenticating...`);
         try {
           await authenticate();
           consecutiveFailures = 0;
         } catch (authErr) {
           log(`Re-authentication failed: ${authErr.message}`);
         }
+      } else {
+        await handleReauth(err.message);
       }
     }
   }
@@ -421,9 +436,9 @@ Docker:
           return;
         }
 
-        if (busy) {
+        if (activeOps.has('lock')) {
           pendingLockCmd = cmd;
-          log(`Operation in progress, queued door ${cmd.toLowerCase()}`);
+          log(`Lock operation in progress, queued door ${cmd.toLowerCase()}`);
           brokerClient.publish(
             `honstar-mqtt/${vin}/door_lock/state`,
             cmd === "LOCK" ? "LOCKING" : "UNLOCKING",
@@ -432,7 +447,7 @@ Docker:
           return;
         }
 
-        await executeLockCmd(cmd);
+        executeLockCmd(cmd);
         return;
       }
 
@@ -457,13 +472,13 @@ Docker:
           return;
         }
 
-        if (busy) {
+        if (activeOps.has('locate')) {
           pendingLocateCmd = cmd;
-          log("Operation in progress, queued locate");
+          log("Locate in progress, queued locate");
           return;
         }
 
-        await executeLocateCmd();
+        executeLocateCmd();
         return;
       }
 
@@ -480,9 +495,9 @@ Docker:
           return;
         }
 
-        if (busy) {
+        if (activeOps.has('climate')) {
           pendingClimateCmd = cmd;
-          log(`Operation in progress, queued climate ${cmd}`);
+          log(`Climate operation in progress, queued climate ${cmd}`);
           brokerClient.publish(
             `honstar-mqtt/${vin}/ev_climate/state`,
             cmd,
@@ -491,7 +506,7 @@ Docker:
           return;
         }
 
-        await executeClimateCmd(cmd);
+        executeClimateCmd(cmd);
         return;
       }
 
@@ -506,10 +521,10 @@ Docker:
         return;
       }
 
-      if (busy) {
+      if (activeOps.has('charge')) {
         pendingChargeLevel = value;
         log(
-          `Operation in progress, queued target charge level ${value}%`
+          `Charge operation in progress, queued target charge level ${value}%`
         );
         // Optimistically update the display even while queued
         brokerClient.publish(
@@ -520,11 +535,11 @@ Docker:
         return;
       }
 
-      await executeSetChargeLevel(value);
+      executeSetChargeLevel(value);
     });
 
     async function executeSetChargeLevel(value) {
-      busy = true;
+      activeOps.add('charge');
       pendingChargeLevel = null;
       const stateTopic = `honstar-mqtt/${vin}/ev_target_charge_level/state`;
 
@@ -557,23 +572,20 @@ Docker:
           );
         }
 
-        if (needsReauth(err.message)) {
-          log("Auth/association error detected, re-authenticating...");
-          try {
-            await authenticate();
-          } catch (authErr) {
-            log(`Re-authentication failed: ${authErr.message}`);
-          }
-        }
+        await handleReauth(err.message);
       } finally {
-        busy = false;
+        activeOps.delete('charge');
       }
 
-      await processPendingCommands();
+      if (pendingChargeLevel != null) {
+        const next = pendingChargeLevel;
+        log(`Processing queued target charge level ${next}%`);
+        executeSetChargeLevel(next);
+      }
     }
 
     async function executeClimateCmd(cmd) {
-      busy = true;
+      activeOps.add('climate');
       pendingClimateCmd = null;
       const climateStateTopic = `honstar-mqtt/${vin}/ev_climate/state`;
       const previousMode = climateMode;
@@ -628,23 +640,20 @@ Docker:
           mqttOpts
         );
 
-        if (needsReauth(err.message)) {
-          log("Auth/association error detected, re-authenticating...");
-          try {
-            await authenticate();
-          } catch (authErr) {
-            log(`Re-authentication failed: ${authErr.message}`);
-          }
-        }
+        await handleReauth(err.message);
       } finally {
-        busy = false;
+        activeOps.delete('climate');
       }
 
-      await processPendingCommands();
+      if (pendingClimateCmd != null) {
+        const next = pendingClimateCmd;
+        log(`Processing queued climate ${next}`);
+        executeClimateCmd(next);
+      }
     }
 
     async function executeLockCmd(cmd) {
-      busy = true;
+      activeOps.add('lock');
       pendingLockCmd = null;
       const lockStateTopic = `honstar-mqtt/${vin}/door_lock/state`;
 
@@ -682,23 +691,20 @@ Docker:
         // Clear state on failure
         brokerClient.publish(lockStateTopic, "None", mqttOpts);
 
-        if (needsReauth(err.message)) {
-          log("Auth/association error detected, re-authenticating...");
-          try {
-            await authenticate();
-          } catch (authErr) {
-            log(`Re-authentication failed: ${authErr.message}`);
-          }
-        }
+        await handleReauth(err.message);
       } finally {
-        busy = false;
+        activeOps.delete('lock');
       }
 
-      await processPendingCommands();
+      if (pendingLockCmd != null) {
+        const next = pendingLockCmd;
+        log(`Processing queued door ${next.toLowerCase()}`);
+        executeLockCmd(next);
+      }
     }
 
     async function executeLocateCmd() {
-      busy = true;
+      activeOps.add('locate');
       pendingLocateCmd = null;
       lastLocateTime = Date.now();
 
@@ -736,38 +742,38 @@ Docker:
       } catch (err) {
         log(`Locate vehicle command failed: ${err.message}`);
 
-        if (needsReauth(err.message)) {
-          log("Auth/association error detected, re-authenticating...");
-          try {
-            await authenticate();
-          } catch (authErr) {
-            log(`Re-authentication failed: ${authErr.message}`);
-          }
-        }
+        await handleReauth(err.message);
       } finally {
-        busy = false;
+        activeOps.delete('locate');
       }
 
-      await processPendingCommands();
-    }
-
-    async function processPendingCommands() {
-      if (pendingLockCmd != null) {
-        const next = pendingLockCmd;
-        log(`Processing queued door ${next.toLowerCase()}`);
-        await executeLockCmd(next);
-      } else if (pendingLocateCmd != null) {
+      if (pendingLocateCmd != null) {
         pendingLocateCmd = null;
         log("Processing queued locate");
-        await executeLocateCmd();
-      } else if (pendingClimateCmd != null) {
+        executeLocateCmd();
+      }
+    }
+
+    function processPendingCommands() {
+      if (pendingLockCmd != null && !activeOps.has('lock')) {
+        const next = pendingLockCmd;
+        log(`Processing queued door ${next.toLowerCase()}`);
+        executeLockCmd(next);
+      }
+      if (pendingLocateCmd != null && !activeOps.has('locate')) {
+        pendingLocateCmd = null;
+        log("Processing queued locate");
+        executeLocateCmd();
+      }
+      if (pendingClimateCmd != null && !activeOps.has('climate')) {
         const next = pendingClimateCmd;
         log(`Processing queued climate ${next}`);
-        await executeClimateCmd(next);
-      } else if (pendingChargeLevel != null) {
+        executeClimateCmd(next);
+      }
+      if (pendingChargeLevel != null && !activeOps.has('charge')) {
         const next = pendingChargeLevel;
         log(`Processing queued target charge level ${next}%`);
-        await executeSetChargeLevel(next);
+        executeSetChargeLevel(next);
       }
     }
 
@@ -775,24 +781,24 @@ Docker:
     await poll();
 
     // Locate vehicle on startup (requires PIN, skip if poll failed)
-    if (pin && !busy && consecutiveFailures === 0) {
-      await executeLocateCmd();
+    if (pin && consecutiveFailures === 0) {
+      executeLocateCmd();
     }
 
     // Schedule recurring polls
     log(`Next poll in ${pollInterval}s`);
     pollTimer = setInterval(async () => {
-      if (busy) {
-        log("Skipping scheduled poll (operation in progress)");
+      if (activeOps.has('poll')) {
+        log("Skipping scheduled poll (poll in progress)");
         return;
       }
-      busy = true;
+      activeOps.add('poll');
       try {
         await poll();
       } finally {
-        busy = false;
+        activeOps.delete('poll');
       }
-      await processPendingCommands();
+      processPendingCommands();
       if (!shuttingDown) {
         log(`Next poll in ${pollInterval}s`);
       }
