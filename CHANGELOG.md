@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.6.2] - 2026-04-08
+
+### Changed
+- Publish calcualted SOC in dashboard when using fallback
+- Improve tire pressure console output formatting
+
 ## [1.6.1] - 2026-04-08
 
 ### Changed
