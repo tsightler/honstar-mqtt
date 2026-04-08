@@ -23,7 +23,7 @@ const { initAwsMqtt, getAwsClient, closeAwsMqtt } = require("./src/aws-mqtt");
 const { connectBroker, publishData } = require("./src/broker");
 const { parseDashboard, printDashboard } = require("./src/dashboard");
 const { publishDiscovery } = require("./src/discovery");
-const { publishAvailability, publishStates, updateVehicleLocation } = require("./src/states");
+const { correctStaleSoc, publishAvailability, publishStates, updateVehicleLocation } = require("./src/states");
 const {
   setTargetChargeLevel,
   startClimate,
@@ -252,6 +252,7 @@ Docker:
       const dashboard = await pollOnce(accessToken, vin);
       if (dashboard) {
         consecutiveFailures = 0;
+        correctStaleSoc(dashboard);
         printDashboard(dashboard);
         publishData(brokerClient, vin, dashboard);
         publishStates(brokerClient, vin, dashboard, vehicle);

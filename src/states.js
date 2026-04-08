@@ -145,35 +145,35 @@ function publishAvailability(brokerClient, vin, available) {
   );
 }
 
+function correctStaleSoc(dashboard) {
+  if (
+    dashboard.battery?.stateOfCharge != null &&
+    dashboard.projectedRangeAtTarget?.value &&
+    dashboard.chargeSettings?.targetLevel &&
+    dashboard.battery?.range != null
+  ) {
+    const milesPerPercent =
+      dashboard.projectedRangeAtTarget.value / dashboard.chargeSettings.targetLevel;
+    const estimatedSoc = dashboard.battery.range / milesPerPercent;
+    const socDiff = Math.abs(estimatedSoc - dashboard.battery.stateOfCharge);
+
+    if (socDiff > 3) {
+      debug(
+        `Stale SOC detected: reported=${Number(dashboard.battery.stateOfCharge).toFixed(1)}% ` +
+        `estimated=${Number(estimatedSoc).toFixed(1)}% (diff=${Number(socDiff).toFixed(1)}%) - using estimated value`
+      );
+      dashboard.battery.stateOfCharge = estimatedSoc;
+    }
+  }
+}
+
 function publishStates(brokerClient, vin, dashboard, vehicle) {
   const opts = { retain: true, qos: 1 };
 
   if (dashboard.battery?.stateOfCharge != null) {
-    let socToPublish = dashboard.battery.stateOfCharge;
-
-    // Detect stale SOC by comparing to range-based estimate
-    if (
-      dashboard.projectedRangeAtTarget?.value &&
-      dashboard.chargeSettings?.targetLevel &&
-      dashboard.battery?.range != null
-    ) {
-      const milesPerPercent =
-        dashboard.projectedRangeAtTarget.value / dashboard.chargeSettings.targetLevel;
-      const estimatedSoc = dashboard.battery.range / milesPerPercent;
-      const socDiff = Math.abs(estimatedSoc - dashboard.battery.stateOfCharge);
-
-      if (socDiff > 3) {
-        debug(
-          `Stale SOC detected: reported=${Number(dashboard.battery.stateOfCharge).toFixed(1)}% ` +
-          `estimated=${Number(estimatedSoc).toFixed(1)}% (diff=${Number(socDiff).toFixed(1)}%) - using estimated value`
-        );
-        socToPublish = estimatedSoc;
-      }
-    }
-
     brokerClient.publish(
       `honstar-mqtt/${vin}/ev_battery_level/state`,
-      String(Math.round(socToPublish)),
+      String(Math.round(dashboard.battery.stateOfCharge)),
       opts
     );
   }
@@ -374,4 +374,4 @@ function publishStates(brokerClient, vin, dashboard, vehicle) {
   log("Published HA entity states");
 }
 
-module.exports = { publishAvailability, publishStates, updateVehicleLocation };
+module.exports = { correctStaleSoc, publishAvailability, publishStates, updateVehicleLocation };
