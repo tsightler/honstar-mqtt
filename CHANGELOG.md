@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.6.3] - 2026-04-08
+
+### Fixed
+- Fix calculated SOC rounding
+
 ## [1.6.2] - 2026-04-08
 
 ### Changed
