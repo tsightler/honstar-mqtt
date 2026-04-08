@@ -19,7 +19,7 @@ const {
   getVehicles,
   requestDashboard,
 } = require("./src/api");
-const { initAwsMqtt, getAwsClient, closeAwsMqtt, subscribeAwsTopic } = require("./src/aws-mqtt");
+const { initAwsMqtt, getAwsClient, closeAwsMqtt } = require("./src/aws-mqtt");
 const { connectBroker, publishData } = require("./src/broker");
 const { parseDashboard, printDashboard } = require("./src/dashboard");
 const { publishDiscovery } = require("./src/discovery");
@@ -37,9 +37,6 @@ const {
 
 async function pollOnce(accessToken, vin) {
   const awsClient = await getAwsClient();
-
-  const dashTopic = `$aws/things/thing_${vin}/shadow/name/DASHBOARD_ASYNC/update`;
-  await subscribeAwsTopic(awsClient, dashTopic);
 
   const cancelSignal = { cancelled: false };
   let dashTimeout;
@@ -777,8 +774,8 @@ Docker:
     // Run first poll immediately
     await poll();
 
-    // Locate vehicle on startup (requires PIN)
-    if (pin && !busy) {
+    // Locate vehicle on startup (requires PIN, skip if poll failed)
+    if (pin && !busy && consecutiveFailures === 0) {
       await executeLocateCmd();
     }
 

@@ -7,7 +7,6 @@ const {
   requestUnlockDoors,
   requestLocateVehicle,
 } = require("./api");
-const { subscribeAwsTopic } = require("./aws-mqtt");
 
 async function setTargetChargeLevel(
   awsClient,
@@ -22,10 +21,6 @@ async function setTargetChargeLevel(
   }
 
   log(`Setting target charge level to ${level}%...`);
-
-  // Subscribe to the charge management shadow topic once
-  const chargeTopic = `$aws/things/thing_${vin}/shadow/name/CHARGEMANAGEMENT_TARGETCHARGELEVEL_ASYNC/update`;
-  await subscribeAwsTopic(awsClient, chargeTopic);
 
   // Retry loop: only retry the HTTP POST + MQTT confirmation
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -110,9 +105,6 @@ async function startClimate(
 ) {
   log(`Starting climate preconditioning (${temperature}°F)...`);
 
-  const engineTopic = `$aws/things/thing_${vin}/shadow/name/ENGINE_START_STOP_ASYNC/update`;
-  await subscribeAwsTopic(awsClient, engineTopic);
-
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       await requestStartClimate(accessToken, vin, pin, temperature);
@@ -195,9 +187,6 @@ async function stopClimate(
 ) {
   log(`Stopping climate preconditioning...`);
 
-  const engineTopic = `$aws/things/thing_${vin}/shadow/name/ENGINE_START_STOP_ASYNC/update`;
-  await subscribeAwsTopic(awsClient, engineTopic);
-
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       await requestStopClimate(accessToken, vin, pin, temperature);
@@ -277,9 +266,6 @@ async function lockDoors(
   { maxAttempts = 3, verifyTimeout = 60000 } = {}
 ) {
   log("Locking doors...");
-
-  const lockTopic = `$aws/things/thing_${vin}/shadow/name/LOCK_ASYNC/update`;
-  await subscribeAwsTopic(awsClient, lockTopic);
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
@@ -368,9 +354,6 @@ async function unlockDoors(
 ) {
   log("Unlocking doors...");
 
-  const lockTopic = `$aws/things/thing_${vin}/shadow/name/LOCK_ASYNC/update`;
-  await subscribeAwsTopic(awsClient, lockTopic);
-
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       await requestUnlockDoors(accessToken, vin, pin);
@@ -457,9 +440,6 @@ async function locateVehicle(
   { maxAttempts = 3, verifyTimeout = 120000 } = {}
 ) {
   log("Locating vehicle...");
-
-  const locationTopic = `$aws/things/thing_${vin}/shadow/name/CARFINDER_LOCATION_ASYNC/update`;
-  await subscribeAwsTopic(awsClient, locationTopic);
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {

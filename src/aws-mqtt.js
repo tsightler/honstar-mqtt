@@ -80,6 +80,18 @@ async function getAwsClient() {
         if (client === newClient) client = null;
       });
 
+      // Subscribe to all shadow update topics for this VIN
+      const shadowWildcard = `$aws/things/thing_${vin}/shadow/name/+/update`;
+      await new Promise((resolve, reject) => {
+        newClient.subscribe(shadowWildcard, { qos: 1 }, (err) => {
+          if (err) reject(err);
+          else {
+            debug(`Subscribed to: ${shadowWildcard}`);
+            resolve();
+          }
+        });
+      });
+
       client = newClient;
       return client;
     } finally {
@@ -98,16 +110,4 @@ function closeAwsMqtt() {
   connectingPromise = null;
 }
 
-function subscribeAwsTopic(awsClient, topic) {
-  return new Promise((resolve, reject) => {
-    awsClient.subscribe(topic, { qos: 1 }, (err) => {
-      if (err) reject(err);
-      else {
-        debug(`Subscribed to: ${topic}`);
-        resolve();
-      }
-    });
-  });
-}
-
-module.exports = { initAwsMqtt, getAwsClient, closeAwsMqtt, subscribeAwsTopic };
+module.exports = { initAwsMqtt, getAwsClient, closeAwsMqtt };
