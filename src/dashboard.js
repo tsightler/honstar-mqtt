@@ -123,12 +123,21 @@ function printDashboard(dashboard) {
   }
 
   if (dashboard.tires) {
-    console.log("\n  TIRE PRESSURES");
-    for (const [pos, data] of Object.entries(dashboard.tires)) {
-      const name = pos.replace(/([A-Z])/g, " $1").trim();
-      console.log(
-        `     ${name.padEnd(16)} ${data.pressurePsi} PSI (${data.pressureKpa} kPa)  (${data.warning})`
-      );
+    const pf = dashboard.tires.placardFront;
+    const pr = dashboard.tires.placardRear;
+    const placardStr = pf && pr
+      ? ` (Placard: Front ${pf.pressurePsi} PSI (${pf.pressureKpa} kPa) / Rear ${pr.pressurePsi} PSI (${pr.pressureKpa} kPa))`
+      : "";
+    console.log(`\n  TIRE PRESSURES${placardStr}`);
+    const t = dashboard.tires;
+    const warn = (d) => d.warning && d.warning !== "OFF" && d.warning !== "unknown" ? " (WARN)" : "";
+    const col = (d) => `${d.pressurePsi} PSI (${d.pressureKpa} kPa)${warn(d)}`;
+    console.log(`              Left                    Right`);
+    if (t.frontLeft && t.frontRight) {
+      console.log(`     Front:  ${col(t.frontLeft).padEnd(24)}${col(t.frontRight)}`);
+    }
+    if (t.rearLeft && t.rearRight) {
+      console.log(`     Rear:   ${col(t.rearLeft).padEnd(24)}${col(t.rearRight)}`);
     }
   }
 
