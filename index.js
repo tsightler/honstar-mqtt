@@ -42,31 +42,44 @@ async function pollOnce(accessToken, vin) {
   await subscribeAwsTopic(awsClient, dashTopic);
 
   const cancelSignal = { cancelled: false };
+  let dashTimeout;
+  let dashHandler;
 
   const dashboardPromise = new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
+    dashTimeout = setTimeout(() => {
       cancelSignal.cancelled = true;
-      awsClient.removeListener("message", handler);
+      awsClient.removeListener("message", dashHandler);
       reject(new Error("Timed out waiting for dashboard data (60s)"));
     }, 60000);
 
-    function handler(topic, message) {
+    dashHandler = function (topic, message) {
       if (!topic.includes("DASHBOARD_ASYNC")) return;
       debug(`Received MQTT message on: ${topic}`);
       const payload = message.toString();
       const dashboard = parseDashboard(payload);
       if (dashboard) {
         cancelSignal.cancelled = true;
-        clearTimeout(timeout);
-        awsClient.removeListener("message", handler);
+        clearTimeout(dashTimeout);
+        awsClient.removeListener("message", dashHandler);
         resolve(dashboard);
       }
-    }
+    };
 
-    awsClient.on("message", handler);
+    awsClient.on("message", dashHandler);
   });
 
-  await requestDashboard(accessToken, vin, { cancelSignal });
+  function cleanupDashboard() {
+    cancelSignal.cancelled = true;
+    clearTimeout(dashTimeout);
+    awsClient.removeListener("message", dashHandler);
+  }
+
+  try {
+    await requestDashboard(accessToken, vin, { cancelSignal });
+  } catch (err) {
+    cleanupDashboard();
+    throw err;
+  }
 
   const retryTimer = setInterval(async () => {
     if (cancelSignal.cancelled) {
@@ -85,9 +98,12 @@ async function pollOnce(accessToken, vin) {
     }
   }, 10000);
 
-  const dashboard = await dashboardPromise;
-  clearInterval(retryTimer);
-  return dashboard;
+  try {
+    const dashboard = await dashboardPromise;
+    return dashboard;
+  } finally {
+    clearInterval(retryTimer);
+  }
 }
 
 // ─── Main ────────────────────────────────────────────────────────────────────
