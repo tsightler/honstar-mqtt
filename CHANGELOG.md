@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.6.0] - 2026-04-08
+
+### Changed
+- Use common AWS MQTT connection for all commands
+
 ## [1.5.9] - 2026-04-07
 
 ### Changed
