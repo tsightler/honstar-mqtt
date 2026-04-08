@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.6.1] - 2026-04-08
+
+### Changed
+- Allow parallel commands
+- Subscribe to MQTT topic with single wildcard
+
+### Fixed
+- Fix crash when all dashboard requests fail
+
 ## [1.6.0] - 2026-04-08
 
 ### Changed
