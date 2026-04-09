@@ -1,6 +1,22 @@
 const { v4: uuidv4 } = require("uuid");
 const { CONFIG, log, debug } = require("./config");
 
+function hondaHeaders(accessToken, overrides = {}) {
+  return {
+    ...CONFIG.commonHeaders,
+    "Content-Type": "application/json",
+    Accept: "application/json",
+    Authorization: `Bearer ${accessToken}`,
+    "hondaHeaderType.version": "1.0",
+    "hondaHeaderType.siteId": "18d216af12884813987e6b7f75a005a1",
+    "hondaHeaderType.systemId": "com.honda.hondalink.cv_android",
+    "hondaHeaderType.clientType": "Mobile",
+    "hondaHeaderType.messageId": "S-1",
+    "hondaHeaderType.collectedTimeStamp": new Date().toISOString(),
+    ...overrides,
+  };
+}
+
 async function request(url, options = {}) {
   const resp = await fetch(url, {
     ...options,
@@ -83,18 +99,13 @@ async function getVehicles(accessToken, hidasIdent) {
   log("Fetching vehicles...");
 
   const data = await request(`${CONFIG.wscHost}/REST/NGT/MyVehicle/1.0`, {
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "application/json",
-      Authorization: `Bearer ${accessToken}`,
+    headers: hondaHeaders(accessToken, {
       "hondaHeaderType.version": "2.0",
       "hondaHeaderType.siteId": "00e0e97f0fb543208a918fc946dea334",
       "hondaHeaderType.messageId": uuidv4(),
       "hondaHeaderType.systemId": "com.honda.dealer.cv_android",
       "hondaHeaderType.userId": hidasIdent,
-      "hondaHeaderType.clientType": "Mobile",
-      "hondaHeaderType.collectedTimeStamp": new Date().toISOString(),
-    },
+    }),
   });
 
   if (data.status !== "SUCCESS" || !data.vehicleInfo?.length) {
@@ -117,19 +128,12 @@ async function getCigToken(accessToken, hidasIdent, vin) {
     `${CONFIG.wscHost}/REST/CIG/services/1.0/token`,
     {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-        Authorization: `Bearer ${accessToken}`,
+      headers: hondaHeaders(accessToken, {
         "hondaHeaderType.userId": hidasIdent,
         "hondaHeaderType.hidasId": hidasIdent,
-        "hondaHeaderType.version": "1.0",
         "hondaHeaderType.messageId": uuidv4().toUpperCase(),
-        "hondaHeaderType.clientType": "Mobile",
-        "hondaHeaderType.systemId": "com.honda.hondalink.cv_android",
         "hondaHeaderType.siteId": "b407a3025b374f668475e97d2e750816",
-        "hondaHeaderType.collectedTimeStamp": new Date().toISOString(),
-      },
+      }),
       body: JSON.stringify({ device: vin }),
     }
   );
@@ -156,18 +160,9 @@ async function requestDashboard(
     try {
       const resp = await fetch(`${CONFIG.wscHost}/REST/NGT/CIG/dbd/async`, {
         method: "POST",
-        headers: {
-          ...CONFIG.commonHeaders,
-          "Content-Type": "application/json",
-          Accept: "application/json",
-          Authorization: `Bearer ${accessToken}`,
-          "hondaHeaderType.version": "1.0",
-          "hondaHeaderType.siteId": "18d216af12884813987e6b7f75a005a1",
-          "hondaHeaderType.systemId": "com.honda.hondalink.cv_android",
-          "hondaHeaderType.clientType": "Mobile",
+        headers: hondaHeaders(accessToken, {
           "hondaHeaderType.messageId": "I-13",
-          "hondaHeaderType.collectedTimeStamp": new Date().toISOString(),
-        },
+        }),
         body: JSON.stringify({
           device: vin,
           filters: CONFIG.dashboardFilters,
@@ -215,18 +210,7 @@ async function requestSetTargetChargeLevel(
         `${CONFIG.wscHost}/REST/NGT/TargetChargeLevel/1.0`,
         {
           method: "POST",
-          headers: {
-            ...CONFIG.commonHeaders,
-            "Content-Type": "application/json",
-            Accept: "application/json",
-            Authorization: `Bearer ${accessToken}`,
-            "hondaHeaderType.version": "1.0",
-            "hondaHeaderType.siteId": "18d216af12884813987e6b7f75a005a1",
-            "hondaHeaderType.systemId": "com.honda.hondalink.cv_android",
-            "hondaHeaderType.clientType": "Mobile",
-            "hondaHeaderType.messageId": "S-1",
-            "hondaHeaderType.collectedTimeStamp": new Date().toISOString(),
-          },
+          headers: hondaHeaders(accessToken),
           body: JSON.stringify({
             device: vin,
             targetChargeLevel: level,
@@ -271,18 +255,7 @@ async function requestStartClimate(accessToken, vin, pin, temperature) {
 
   const resp = await fetch(`${CONFIG.wscHost}/REST/NGT/CIG/eng/async/srt`, {
     method: "POST",
-    headers: {
-      ...CONFIG.commonHeaders,
-      "Content-Type": "application/json",
-      Accept: "application/json",
-      Authorization: `Bearer ${accessToken}`,
-      "hondaHeaderType.version": "1.0",
-      "hondaHeaderType.siteId": "18d216af12884813987e6b7f75a005a1",
-      "hondaHeaderType.systemId": "com.honda.hondalink.cv_android",
-      "hondaHeaderType.clientType": "Mobile",
-      "hondaHeaderType.messageId": "S-1",
-      "hondaHeaderType.collectedTimeStamp": new Date().toISOString(),
-    },
+    headers: hondaHeaders(accessToken),
     body: JSON.stringify({
       device: vin,
       extend: false,
@@ -319,18 +292,7 @@ async function requestStopClimate(accessToken, vin, pin, temperature) {
 
   const resp = await fetch(`${CONFIG.wscHost}/REST/NGT/CIG/eng/async/sop`, {
     method: "POST",
-    headers: {
-      ...CONFIG.commonHeaders,
-      "Content-Type": "application/json",
-      Accept: "application/json",
-      Authorization: `Bearer ${accessToken}`,
-      "hondaHeaderType.version": "1.0",
-      "hondaHeaderType.siteId": "18d216af12884813987e6b7f75a005a1",
-      "hondaHeaderType.systemId": "com.honda.hondalink.cv_android",
-      "hondaHeaderType.clientType": "Mobile",
-      "hondaHeaderType.messageId": "S-1",
-      "hondaHeaderType.collectedTimeStamp": new Date().toISOString(),
-    },
+    headers: hondaHeaders(accessToken),
     body: JSON.stringify({
       device: vin,
       extend: false,
@@ -367,18 +329,7 @@ async function requestLockDoors(accessToken, vin, pin) {
 
   const resp = await fetch(`${CONFIG.wscHost}/REST/NGT/CIG/lk/async/alk`, {
     method: "POST",
-    headers: {
-      ...CONFIG.commonHeaders,
-      "Content-Type": "application/json",
-      Accept: "application/json",
-      Authorization: `Bearer ${accessToken}`,
-      "hondaHeaderType.version": "1.0",
-      "hondaHeaderType.siteId": "18d216af12884813987e6b7f75a005a1",
-      "hondaHeaderType.systemId": "com.honda.hondalink.cv_android",
-      "hondaHeaderType.clientType": "Mobile",
-      "hondaHeaderType.messageId": "S-1",
-      "hondaHeaderType.collectedTimeStamp": new Date().toISOString(),
-    },
+    headers: hondaHeaders(accessToken),
     body: JSON.stringify({
       delay: { unit: "Minutes", value: 2 },
       device: vin,
@@ -409,18 +360,7 @@ async function requestUnlockDoors(accessToken, vin, pin) {
 
   const resp = await fetch(`${CONFIG.wscHost}/REST/NGT/CIG/lk/async/dulk`, {
     method: "POST",
-    headers: {
-      ...CONFIG.commonHeaders,
-      "Content-Type": "application/json",
-      Accept: "application/json",
-      Authorization: `Bearer ${accessToken}`,
-      "hondaHeaderType.version": "1.0",
-      "hondaHeaderType.siteId": "18d216af12884813987e6b7f75a005a1",
-      "hondaHeaderType.systemId": "com.honda.hondalink.cv_android",
-      "hondaHeaderType.clientType": "Mobile",
-      "hondaHeaderType.messageId": "S-1",
-      "hondaHeaderType.collectedTimeStamp": new Date().toISOString(),
-    },
+    headers: hondaHeaders(accessToken),
     body: JSON.stringify({
       device: vin,
       pin,
@@ -450,18 +390,7 @@ async function requestLocateVehicle(accessToken, vin, pin) {
 
   const resp = await fetch(`${CONFIG.wscHost}/REST/NGT/CIG/cfl/async`, {
     method: "POST",
-    headers: {
-      ...CONFIG.commonHeaders,
-      "Content-Type": "application/json",
-      Accept: "application/json",
-      Authorization: `Bearer ${accessToken}`,
-      "hondaHeaderType.version": "1.0",
-      "hondaHeaderType.siteId": "18d216af12884813987e6b7f75a005a1",
-      "hondaHeaderType.systemId": "com.honda.hondalink.cv_android",
-      "hondaHeaderType.clientType": "Mobile",
-      "hondaHeaderType.messageId": "S-1",
-      "hondaHeaderType.collectedTimeStamp": new Date().toISOString(),
-    },
+    headers: hondaHeaders(accessToken),
     body: JSON.stringify({
       device: vin,
       pin,
