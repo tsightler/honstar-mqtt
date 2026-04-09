@@ -7,15 +7,39 @@ let client = null;
 let connectingPromise = null;
 let getCredentials = null;
 
+// Deadline-based connection lifecycle
+let connectionDeadline = 0;
+let deadlineTimer = null;
+
+function extendConnectionDeadline(ms) {
+  const newDeadline = Date.now() + ms;
+  if (newDeadline <= connectionDeadline) return; // existing deadline is later
+  connectionDeadline = newDeadline;
+  if (deadlineTimer) clearTimeout(deadlineTimer);
+  deadlineTimer = setTimeout(() => {
+    if (client && Date.now() >= connectionDeadline) {
+      debug("Closing MQTT connection (deadline reached)");
+      client.end(true);
+      client = null;
+    }
+    deadlineTimer = null;
+  }, ms);
+}
+
 function initAwsMqtt(credentialsGetter) {
   getCredentials = credentialsGetter;
 }
 
 async function getAwsClient() {
-  if (client && client.connected) return client;
+  if (client && client.connected) {
+    return client;
+  }
 
   // If a connection attempt is already in progress, wait for it
-  if (connectingPromise) return connectingPromise;
+  if (connectingPromise) {
+    await connectingPromise;
+    return client;
+  }
 
   connectingPromise = (async () => {
     try {
@@ -72,12 +96,20 @@ async function getAwsClient() {
 
       newClient.on("close", () => {
         debug("AWS IoT MQTT connection closed");
-        if (client === newClient) client = null;
+        if (client === newClient) {
+          client = null;
+          if (deadlineTimer) { clearTimeout(deadlineTimer); deadlineTimer = null; }
+          connectionDeadline = 0;
+        }
       });
 
       newClient.on("offline", () => {
         debug("AWS IoT MQTT connection offline");
-        if (client === newClient) client = null;
+        if (client === newClient) {
+          client = null;
+          if (deadlineTimer) { clearTimeout(deadlineTimer); deadlineTimer = null; }
+          connectionDeadline = 0;
+        }
       });
 
       // Subscribe to all shadow update topics for this VIN
@@ -103,6 +135,11 @@ async function getAwsClient() {
 }
 
 function closeAwsMqtt() {
+  if (deadlineTimer) {
+    clearTimeout(deadlineTimer);
+    deadlineTimer = null;
+  }
+  connectionDeadline = 0;
   if (client) {
     client.end(true);
     client = null;
@@ -110,4 +147,4 @@ function closeAwsMqtt() {
   connectingPromise = null;
 }
 
-module.exports = { initAwsMqtt, getAwsClient, closeAwsMqtt };
+module.exports = { initAwsMqtt, getAwsClient, extendConnectionDeadline, closeAwsMqtt };

@@ -1,4 +1,5 @@
 const { log, debug } = require("./config");
+const { getAwsClient, extendConnectionDeadline } = require("./aws-mqtt");
 const {
   requestSetTargetChargeLevel,
   requestStartClimate,
@@ -8,8 +9,103 @@ const {
   requestLocateVehicle,
 } = require("./api");
 
+/**
+ * Helper: wait for an MQTT response matching a topic filter.
+ * Fails fast if the connection drops instead of waiting for the full timeout.
+ */
+function waitForMqttResponse(awsClient, topicFilter, verifyTimeout, parseResponse) {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      cleanup();
+      reject(
+        new Error(
+          `Timed out waiting for ${topicFilter} confirmation (${verifyTimeout / 1000}s)`
+        )
+      );
+    }, verifyTimeout);
+
+    function cleanup() {
+      clearTimeout(timeout);
+      awsClient.removeListener("message", handler);
+      awsClient.removeListener("close", onClose);
+    }
+
+    function onClose() {
+      cleanup();
+      reject(new Error("MQTT connection lost"));
+    }
+
+    function handler(topic, message) {
+      if (!topic.includes(topicFilter)) return;
+
+      try {
+        const payload = JSON.parse(message.toString());
+        const reported = payload.state?.reported;
+        if (!reported) return;
+
+        const result = parseResponse(reported);
+        if (result !== undefined) {
+          cleanup();
+          if (result instanceof Error) {
+            reject(result);
+          } else {
+            resolve(result);
+          }
+        }
+      } catch {
+        // ignore parse errors
+      }
+    }
+
+    awsClient.on("message", handler);
+    awsClient.on("close", onClose);
+  });
+}
+
+function parseStatusResponse(label) {
+  return (reported) => {
+    debug(`${label} response: ${reported.status} (${reported.cigServiceRequestId})`);
+
+    if (reported.status === "SUCCESS") return true;
+    if (reported.status !== "IN_PROGRESS" && reported.status !== "PENDING") {
+      return new Error(`${label} failed with status: ${reported.status}`);
+    }
+    return undefined; // keep waiting
+  };
+}
+
+/**
+ * Common command executor: HTTP request → MQTT wait → retry with deadline extension.
+ */
+async function executeCommand({
+  name,
+  httpRequest,
+  topicFilter,
+  parseResponse,
+  timeout = 60000,
+  maxAttempts = 3,
+  retryDelay = 10000,
+  nonRetryableErrors = [],
+}) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const awsClient = await getAwsClient();
+    extendConnectionDeadline(timeout + 60000);
+    try {
+      await httpRequest();
+      return await waitForMqttResponse(awsClient, topicFilter, timeout, parseResponse);
+    } catch (err) {
+      if (nonRetryableErrors.some((msg) => err.message.includes(msg))) throw err;
+      log(`${name} attempt ${attempt}/${maxAttempts} failed: ${err.message}`);
+      if (attempt < maxAttempts) {
+        log("Retrying in 10 seconds...");
+        await new Promise((r) => setTimeout(r, retryDelay));
+      }
+    }
+  }
+  throw new Error(`Failed to ${name} after ${maxAttempts} attempts`);
+}
+
 async function setTargetChargeLevel(
-  awsClient,
   accessToken,
   vin,
   level,
@@ -22,81 +118,20 @@ async function setTargetChargeLevel(
 
   log(`Setting target charge level to ${level}%...`);
 
-  // Retry loop: only retry the HTTP POST + MQTT confirmation
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    try {
-      await requestSetTargetChargeLevel(accessToken, vin, level);
+  await executeCommand({
+    name: "set target charge level",
+    httpRequest: () => requestSetTargetChargeLevel(accessToken, vin, level),
+    topicFilter: "CHARGEMANAGEMENT_TARGETCHARGELEVEL_ASYNC",
+    parseResponse: parseStatusResponse("Charge level"),
+    timeout: verifyTimeout,
+    maxAttempts,
+  });
 
-      // Wait for SUCCESS on the MQTT topic
-      const success = await new Promise((resolve, reject) => {
-        const timeout = setTimeout(() => {
-          awsClient.removeListener("message", handler);
-          reject(
-            new Error(
-              `Timed out waiting for charge level confirmation (${verifyTimeout / 1000}s)`
-            )
-          );
-        }, verifyTimeout);
-
-        function handler(topic, message) {
-          if (!topic.includes("CHARGEMANAGEMENT_TARGETCHARGELEVEL_ASYNC"))
-            return;
-
-          try {
-            const payload = JSON.parse(message.toString());
-            const reported = payload.state?.reported;
-            if (!reported) return;
-
-            debug(
-              `Charge level response: ${reported.status} (${reported.cigServiceRequestId})`
-            );
-
-            if (reported.status === "SUCCESS") {
-              clearTimeout(timeout);
-              awsClient.removeListener("message", handler);
-              resolve(true);
-            } else if (
-              reported.status !== "IN_PROGRESS" &&
-              reported.status !== "PENDING"
-            ) {
-              clearTimeout(timeout);
-              awsClient.removeListener("message", handler);
-              reject(
-                new Error(
-                  `Set target charge failed with status: ${reported.status}`
-                )
-              );
-            }
-          } catch {
-            // ignore parse errors
-          }
-        }
-
-        awsClient.on("message", handler);
-      });
-
-      if (success) {
-        log(`Target charge level set to ${level}%`);
-        return true;
-      }
-    } catch (err) {
-      log(
-        `Set target charge attempt ${attempt}/${maxAttempts} failed: ${err.message}`
-      );
-      if (attempt < maxAttempts) {
-        log("Retrying in 10 seconds...");
-        await new Promise((r) => setTimeout(r, 10000));
-      }
-    }
-  }
-
-  throw new Error(
-    `Failed to set target charge level after ${maxAttempts} attempts`
-  );
+  log(`Target charge level set to ${level}%`);
+  return true;
 }
 
 async function startClimate(
-  awsClient,
   accessToken,
   vin,
   pin,
@@ -105,80 +140,21 @@ async function startClimate(
 ) {
   log(`Starting climate preconditioning (${temperature}°F)...`);
 
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    try {
-      await requestStartClimate(accessToken, vin, pin, temperature);
+  await executeCommand({
+    name: "start climate",
+    httpRequest: () => requestStartClimate(accessToken, vin, pin, temperature),
+    topicFilter: "ENGINE_START_STOP_ASYNC",
+    parseResponse: parseStatusResponse("Climate start"),
+    timeout: verifyTimeout,
+    maxAttempts,
+    nonRetryableErrors: ["Pin does not match"],
+  });
 
-      const success = await new Promise((resolve, reject) => {
-        const timeout = setTimeout(() => {
-          awsClient.removeListener("message", handler);
-          reject(
-            new Error(
-              `Timed out waiting for climate start confirmation (${verifyTimeout / 1000}s)`
-            )
-          );
-        }, verifyTimeout);
-
-        function handler(topic, message) {
-          if (!topic.includes("ENGINE_START_STOP_ASYNC")) return;
-
-          try {
-            const payload = JSON.parse(message.toString());
-            const reported = payload.state?.reported;
-            if (!reported) return;
-
-            debug(
-              `Climate response: ${reported.status} (${reported.cigServiceRequestId})`
-            );
-
-            if (reported.status === "SUCCESS") {
-              clearTimeout(timeout);
-              awsClient.removeListener("message", handler);
-              resolve(true);
-            } else if (
-              reported.status !== "IN_PROGRESS" &&
-              reported.status !== "PENDING"
-            ) {
-              clearTimeout(timeout);
-              awsClient.removeListener("message", handler);
-              reject(
-                new Error(
-                  `Climate start failed with status: ${reported.status}`
-                )
-              );
-            }
-          } catch {
-            // ignore parse errors
-          }
-        }
-
-        awsClient.on("message", handler);
-      });
-
-      if (success) {
-        log(`Climate preconditioning started at ${temperature}°F`);
-        return true;
-      }
-    } catch (err) {
-      // Don't retry PIN errors
-      if (err.message.includes("Pin does not match")) {
-        throw err;
-      }
-      log(
-        `Climate start attempt ${attempt}/${maxAttempts} failed: ${err.message}`
-      );
-      if (attempt < maxAttempts) {
-        log("Retrying in 10 seconds...");
-        await new Promise((r) => setTimeout(r, 10000));
-      }
-    }
-  }
-
-  throw new Error(`Failed to start climate after ${maxAttempts} attempts`);
+  log(`Climate preconditioning started at ${temperature}°F`);
+  return true;
 }
 
 async function stopClimate(
-  awsClient,
   accessToken,
   vin,
   pin,
@@ -187,79 +163,21 @@ async function stopClimate(
 ) {
   log(`Stopping climate preconditioning...`);
 
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    try {
-      await requestStopClimate(accessToken, vin, pin, temperature);
+  await executeCommand({
+    name: "stop climate",
+    httpRequest: () => requestStopClimate(accessToken, vin, pin, temperature),
+    topicFilter: "ENGINE_START_STOP_ASYNC",
+    parseResponse: parseStatusResponse("Climate stop"),
+    timeout: verifyTimeout,
+    maxAttempts,
+    nonRetryableErrors: ["Pin does not match"],
+  });
 
-      const success = await new Promise((resolve, reject) => {
-        const timeout = setTimeout(() => {
-          awsClient.removeListener("message", handler);
-          reject(
-            new Error(
-              `Timed out waiting for climate stop confirmation (${verifyTimeout / 1000}s)`
-            )
-          );
-        }, verifyTimeout);
-
-        function handler(topic, message) {
-          if (!topic.includes("ENGINE_START_STOP_ASYNC")) return;
-
-          try {
-            const payload = JSON.parse(message.toString());
-            const reported = payload.state?.reported;
-            if (!reported) return;
-
-            debug(
-              `Climate response: ${reported.status} (${reported.cigServiceRequestId})`
-            );
-
-            if (reported.status === "SUCCESS") {
-              clearTimeout(timeout);
-              awsClient.removeListener("message", handler);
-              resolve(true);
-            } else if (
-              reported.status !== "IN_PROGRESS" &&
-              reported.status !== "PENDING"
-            ) {
-              clearTimeout(timeout);
-              awsClient.removeListener("message", handler);
-              reject(
-                new Error(
-                  `Climate stop failed with status: ${reported.status}`
-                )
-              );
-            }
-          } catch {
-            // ignore parse errors
-          }
-        }
-
-        awsClient.on("message", handler);
-      });
-
-      if (success) {
-        log(`Climate preconditioning stopped`);
-        return true;
-      }
-    } catch (err) {
-      if (err.message.includes("Pin does not match")) {
-        throw err;
-      }
-      log(
-        `Climate stop attempt ${attempt}/${maxAttempts} failed: ${err.message}`
-      );
-      if (attempt < maxAttempts) {
-        log("Retrying in 10 seconds...");
-        await new Promise((r) => setTimeout(r, 10000));
-      }
-    }
-  }
-
-  throw new Error(`Failed to stop climate after ${maxAttempts} attempts`);
+  log(`Climate preconditioning stopped`);
+  return true;
 }
 
 async function lockDoors(
-  awsClient,
   accessToken,
   vin,
   pin,
@@ -267,86 +185,38 @@ async function lockDoors(
 ) {
   log("Locking doors...");
 
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    try {
-      await requestLockDoors(accessToken, vin, pin);
+  await executeCommand({
+    name: "lock doors",
+    httpRequest: () => requestLockDoors(accessToken, vin, pin),
+    topicFilter: "LOCK_ASYNC",
+    timeout: verifyTimeout,
+    maxAttempts,
+    nonRetryableErrors: ["Pin does not match"],
+    parseResponse: (reported) => {
+      // Only handle lock responses (not unlock)
+      if (
+        reported.cigServiceRequestId &&
+        !reported.cigServiceRequestId.startsWith("lockDoor")
+      )
+        return undefined;
 
-      const success = await new Promise((resolve, reject) => {
-        const timeout = setTimeout(() => {
-          awsClient.removeListener("message", handler);
-          reject(
-            new Error(
-              `Timed out waiting for door lock confirmation (${verifyTimeout / 1000}s)`
-            )
-          );
-        }, verifyTimeout);
-
-        function handler(topic, message) {
-          if (!topic.includes("LOCK_ASYNC")) return;
-
-          try {
-            const payload = JSON.parse(message.toString());
-            const reported = payload.state?.reported;
-            if (!reported) return;
-
-            // Only handle lock responses (not unlock)
-            if (
-              reported.cigServiceRequestId &&
-              !reported.cigServiceRequestId.startsWith("lockDoor")
-            )
-              return;
-
-            debug(
-              `Lock response: ${reported.status} (${reported.cigServiceRequestId})`
-            );
-
-            if (reported.status === "SUCCESS") {
-              clearTimeout(timeout);
-              awsClient.removeListener("message", handler);
-              resolve(true);
-            } else if (
-              reported.status !== "IN_PROGRESS" &&
-              reported.status !== "PENDING"
-            ) {
-              clearTimeout(timeout);
-              awsClient.removeListener("message", handler);
-              reject(
-                new Error(
-                  `Door lock failed with status: ${reported.status}`
-                )
-              );
-            }
-          } catch {
-            // ignore parse errors
-          }
-        }
-
-        awsClient.on("message", handler);
-      });
-
-      if (success) {
-        log("Doors locked");
-        return true;
-      }
-    } catch (err) {
-      if (err.message.includes("Pin does not match")) {
-        throw err;
-      }
-      log(
-        `Door lock attempt ${attempt}/${maxAttempts} failed: ${err.message}`
+      debug(
+        `Lock response: ${reported.status} (${reported.cigServiceRequestId})`
       );
-      if (attempt < maxAttempts) {
-        log("Retrying in 10 seconds...");
-        await new Promise((r) => setTimeout(r, 10000));
-      }
-    }
-  }
 
-  throw new Error(`Failed to lock doors after ${maxAttempts} attempts`);
+      if (reported.status === "SUCCESS") return true;
+      if (reported.status !== "IN_PROGRESS" && reported.status !== "PENDING") {
+        return new Error(`Door lock failed with status: ${reported.status}`);
+      }
+      return undefined;
+    },
+  });
+
+  log("Doors locked");
+  return true;
 }
 
 async function unlockDoors(
-  awsClient,
   accessToken,
   vin,
   pin,
@@ -354,86 +224,38 @@ async function unlockDoors(
 ) {
   log("Unlocking doors...");
 
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    try {
-      await requestUnlockDoors(accessToken, vin, pin);
+  await executeCommand({
+    name: "unlock doors",
+    httpRequest: () => requestUnlockDoors(accessToken, vin, pin),
+    topicFilter: "LOCK_ASYNC",
+    timeout: verifyTimeout,
+    maxAttempts,
+    nonRetryableErrors: ["Pin does not match"],
+    parseResponse: (reported) => {
+      // Only handle unlock responses (not lock)
+      if (
+        reported.cigServiceRequestId &&
+        !reported.cigServiceRequestId.startsWith("unlockDoor")
+      )
+        return undefined;
 
-      const success = await new Promise((resolve, reject) => {
-        const timeout = setTimeout(() => {
-          awsClient.removeListener("message", handler);
-          reject(
-            new Error(
-              `Timed out waiting for door unlock confirmation (${verifyTimeout / 1000}s)`
-            )
-          );
-        }, verifyTimeout);
-
-        function handler(topic, message) {
-          if (!topic.includes("LOCK_ASYNC")) return;
-
-          try {
-            const payload = JSON.parse(message.toString());
-            const reported = payload.state?.reported;
-            if (!reported) return;
-
-            // Only handle unlock responses (not lock)
-            if (
-              reported.cigServiceRequestId &&
-              !reported.cigServiceRequestId.startsWith("unlockDoor")
-            )
-              return;
-
-            debug(
-              `Unlock response: ${reported.status} (${reported.cigServiceRequestId})`
-            );
-
-            if (reported.status === "SUCCESS") {
-              clearTimeout(timeout);
-              awsClient.removeListener("message", handler);
-              resolve(true);
-            } else if (
-              reported.status !== "IN_PROGRESS" &&
-              reported.status !== "PENDING"
-            ) {
-              clearTimeout(timeout);
-              awsClient.removeListener("message", handler);
-              reject(
-                new Error(
-                  `Door unlock failed with status: ${reported.status}`
-                )
-              );
-            }
-          } catch {
-            // ignore parse errors
-          }
-        }
-
-        awsClient.on("message", handler);
-      });
-
-      if (success) {
-        log("Doors unlocked");
-        return true;
-      }
-    } catch (err) {
-      if (err.message.includes("Pin does not match")) {
-        throw err;
-      }
-      log(
-        `Door unlock attempt ${attempt}/${maxAttempts} failed: ${err.message}`
+      debug(
+        `Unlock response: ${reported.status} (${reported.cigServiceRequestId})`
       );
-      if (attempt < maxAttempts) {
-        log("Retrying in 10 seconds...");
-        await new Promise((r) => setTimeout(r, 10000));
-      }
-    }
-  }
 
-  throw new Error(`Failed to unlock doors after ${maxAttempts} attempts`);
+      if (reported.status === "SUCCESS") return true;
+      if (reported.status !== "IN_PROGRESS" && reported.status !== "PENDING") {
+        return new Error(`Door unlock failed with status: ${reported.status}`);
+      }
+      return undefined;
+    },
+  });
+
+  log("Doors unlocked");
+  return true;
 }
 
 async function locateVehicle(
-  awsClient,
   accessToken,
   vin,
   pin,
@@ -441,80 +263,35 @@ async function locateVehicle(
 ) {
   log("Locating vehicle...");
 
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    try {
-      await requestLocateVehicle(accessToken, vin, pin);
-
-      const result = await new Promise((resolve, reject) => {
-        const timeout = setTimeout(() => {
-          awsClient.removeListener("message", handler);
-          reject(
-            new Error(
-              `Timed out waiting for locate confirmation (${verifyTimeout / 1000}s)`
-            )
-          );
-        }, verifyTimeout);
-
-        function handler(topic, message) {
-          if (!topic.includes("CARFINDER_LOCATION_ASYNC")) return;
-
-          try {
-            const payload = JSON.parse(message.toString());
-            const reported = payload.state?.reported;
-            if (!reported) return;
-
-            debug(
-              `Locate response: ${reported.status} (${reported.cigServiceRequestId})`
-            );
-
-            if (reported.status === "SUCCESS") {
-              clearTimeout(timeout);
-              awsClient.removeListener("message", handler);
-              resolve(reported.responseBody);
-            } else if (
-              reported.status !== "IN_PROGRESS" &&
-              reported.status !== "PENDING"
-            ) {
-              clearTimeout(timeout);
-              awsClient.removeListener("message", handler);
-              reject(
-                new Error(
-                  `Locate vehicle failed with status: ${reported.status}`
-                )
-              );
-            }
-          } catch {
-            // ignore parse errors
-          }
-        }
-
-        awsClient.on("message", handler);
-      });
-
-      if (result) {
-        const gps = result.gpsData?.coordinate;
-        if (gps) {
-          log(`Vehicle located: ${gps.latitude}, ${gps.longitude}`);
-        } else {
-          log("Vehicle located (no GPS data in response)");
-        }
-        return result;
-      }
-    } catch (err) {
-      if (err.message.includes("Pin does not match")) {
-        throw err;
-      }
-      log(
-        `Locate vehicle attempt ${attempt}/${maxAttempts} failed: ${err.message}`
+  const result = await executeCommand({
+    name: "locate vehicle",
+    httpRequest: () => requestLocateVehicle(accessToken, vin, pin),
+    topicFilter: "CARFINDER_LOCATION_ASYNC",
+    timeout: verifyTimeout,
+    maxAttempts,
+    nonRetryableErrors: ["Pin does not match"],
+    parseResponse: (reported) => {
+      debug(
+        `Locate response: ${reported.status} (${reported.cigServiceRequestId})`
       );
-      if (attempt < maxAttempts) {
-        log("Retrying in 10 seconds...");
-        await new Promise((r) => setTimeout(r, 10000));
-      }
-    }
-  }
 
-  throw new Error(`Failed to locate vehicle after ${maxAttempts} attempts`);
+      if (reported.status === "SUCCESS") return reported.responseBody;
+      if (reported.status !== "IN_PROGRESS" && reported.status !== "PENDING") {
+        return new Error(
+          `Locate vehicle failed with status: ${reported.status}`
+        );
+      }
+      return undefined;
+    },
+  });
+
+  const gps = result?.gpsData?.coordinate;
+  if (gps) {
+    log(`Vehicle located: ${gps.latitude}, ${gps.longitude}`);
+  } else {
+    log("Vehicle located (no GPS data in response)");
+  }
+  return result;
 }
 
 module.exports = {

@@ -19,7 +19,7 @@ const {
   getVehicles,
   requestDashboard,
 } = require("./src/api");
-const { initAwsMqtt, getAwsClient, closeAwsMqtt } = require("./src/aws-mqtt");
+const { initAwsMqtt, getAwsClient, extendConnectionDeadline, closeAwsMqtt } = require("./src/aws-mqtt");
 const { connectBroker, publishData } = require("./src/broker");
 const { parseDashboard, printDashboard } = require("./src/dashboard");
 const { publishDiscovery } = require("./src/discovery");
@@ -36,45 +36,66 @@ const {
 // ─── Poll Cycle ──────────────────────────────────────────────────────────────
 
 async function pollOnce(accessToken, vin) {
-  const awsClient = await getAwsClient();
+  let currentClient = await getAwsClient();
+  extendConnectionDeadline(120000); // dashboard timeout (60s) + 60s buffer
 
   const cancelSignal = { cancelled: false };
-  let dashTimeout;
-  let dashHandler;
+  let dashResolve, dashReject;
 
   const dashboardPromise = new Promise((resolve, reject) => {
-    dashTimeout = setTimeout(() => {
-      cancelSignal.cancelled = true;
-      awsClient.removeListener("message", dashHandler);
-      reject(new Error("Timed out waiting for dashboard data (60s)"));
-    }, 60000);
-
-    dashHandler = function (topic, message) {
-      if (!topic.includes("DASHBOARD_ASYNC")) return;
-      debug(`Received MQTT message on: ${topic}`);
-      const payload = message.toString();
-      const dashboard = parseDashboard(payload);
-      if (dashboard) {
-        cancelSignal.cancelled = true;
-        clearTimeout(dashTimeout);
-        awsClient.removeListener("message", dashHandler);
-        resolve(dashboard);
-      }
-    };
-
-    awsClient.on("message", dashHandler);
+    dashResolve = resolve;
+    dashReject = reject;
   });
 
-  function cleanupDashboard() {
+  let dashTimeout = setTimeout(() => {
     cancelSignal.cancelled = true;
-    clearTimeout(dashTimeout);
-    awsClient.removeListener("message", dashHandler);
+    detachHandlers();
+    dashReject(new Error("Timed out waiting for dashboard data (60s)"));
+  }, 60000);
+
+  function dashHandler(topic, message) {
+    if (!topic.includes("DASHBOARD_ASYNC")) return;
+    debug(`Received MQTT message on: ${topic}`);
+    const payload = message.toString();
+    const dashboard = parseDashboard(payload);
+    if (dashboard) {
+      cancelSignal.cancelled = true;
+      clearTimeout(dashTimeout);
+      detachHandlers();
+      dashResolve(dashboard);
+    }
   }
+
+  function closeHandler() {
+    debug("MQTT connection lost during poll, will reconnect on next retry");
+    if (currentClient) {
+      currentClient.removeListener("message", dashHandler);
+      currentClient.removeListener("close", closeHandler);
+    }
+    currentClient = null;
+  }
+
+  function attachHandlers(client) {
+    currentClient = client;
+    client.on("message", dashHandler);
+    client.on("close", closeHandler);
+  }
+
+  function detachHandlers() {
+    if (currentClient) {
+      currentClient.removeListener("message", dashHandler);
+      currentClient.removeListener("close", closeHandler);
+    }
+  }
+
+  attachHandlers(currentClient);
 
   try {
     await requestDashboard(accessToken, vin, { cancelSignal });
   } catch (err) {
-    cleanupDashboard();
+    cancelSignal.cancelled = true;
+    clearTimeout(dashTimeout);
+    detachHandlers();
     throw err;
   }
 
@@ -83,6 +104,20 @@ async function pollOnce(accessToken, vin) {
       clearInterval(retryTimer);
       return;
     }
+
+    // Reconnect if MQTT connection was lost
+    if (!currentClient || !currentClient.connected) {
+      try {
+        debug("Reconnecting MQTT for poll...");
+        const newClient = await getAwsClient();
+        extendConnectionDeadline(120000);
+        attachHandlers(newClient);
+      } catch (err) {
+        debug(`MQTT reconnect failed: ${err.message}`);
+        return;
+      }
+    }
+
     debug("Re-requesting dashboard...");
     try {
       await requestDashboard(accessToken, vin, {
@@ -549,8 +584,7 @@ Docker:
       log(`Optimistically set target charge level state to ${value}%`);
 
       try {
-        const awsClient = await getAwsClient();
-        await setTargetChargeLevel(awsClient, accessToken, vin, value);
+        await setTargetChargeLevel(accessToken, vin, value);
 
         // Command accepted — enter optimistic mode for 15 minutes
         optimisticTargetLevel = value;
@@ -596,16 +630,8 @@ Docker:
       log(`Optimistically set climate state to ${cmd}`);
 
       try {
-        const awsClient = await getAwsClient();
-
         if (cmd === "ON") {
-          await startClimate(
-            awsClient,
-            accessToken,
-            vin,
-            pin,
-            climateTemp
-          );
+          await startClimate(accessToken, vin, pin, climateTemp);
           climateMode = "auto";
 
           // Auto-off after 60 minutes (max preconditioning duration)
@@ -617,13 +643,7 @@ Docker:
             log("Climate preconditioning auto-off after 60 minutes");
           }, 60 * 60 * 1000);
         } else {
-          await stopClimate(
-            awsClient,
-            accessToken,
-            vin,
-            pin,
-            climateTemp
-          );
+          await stopClimate(accessToken, vin, pin, climateTemp);
           climateMode = "off";
           if (climateOffTimer) {
             clearTimeout(climateOffTimer);
@@ -668,12 +688,10 @@ Docker:
       );
 
       try {
-        const awsClient = await getAwsClient();
-
         if (cmd === "LOCK") {
-          await lockDoors(awsClient, accessToken, vin, pin);
+          await lockDoors(accessToken, vin, pin);
         } else {
-          await unlockDoors(awsClient, accessToken, vin, pin);
+          await unlockDoors(accessToken, vin, pin);
         }
 
         // Command succeeded, publish final state then revert to unknown after 2 min
@@ -710,14 +728,7 @@ Docker:
       lastLocateTime = Date.now();
 
       try {
-        const awsClient = await getAwsClient();
-
-        const result = await locateVehicle(
-          awsClient,
-          accessToken,
-          vin,
-          pin
-        );
+        const result = await locateVehicle(accessToken, vin, pin);
 
         if (result?.gpsData?.coordinate) {
           const gps = result.gpsData.coordinate;
