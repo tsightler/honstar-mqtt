@@ -288,7 +288,7 @@ Docker:
       if (dashboard) {
         consecutiveFailures = 0;
         correctStaleSoc(dashboard);
-        printDashboard(dashboard);
+        printDashboard(dashboard, { climateTemp });
         publishData(brokerClient, vin, dashboard);
         publishStates(brokerClient, vin, dashboard, vehicle);
         publishAvailability(brokerClient, vin, true);

@@ -99,71 +99,193 @@ function parseDashboard(payload) {
   }
 }
 
-function printDashboard(dashboard) {
-  console.log("\n" + "=".repeat(60));
-  console.log("  VEHICLE DASHBOARD STATUS");
-  console.log("=".repeat(60));
-  console.log(`  Timestamp:  ${dashboard.timestamp}`);
-  console.log(`  Status:     ${dashboard.status}`);
+function printDashboard(dashboard, options = {}) {
+  const IW = 70;
+  const LW = 35;
+  const RW = 34;
 
-  if (dashboard.battery) {
-    console.log("\n  BATTERY & CHARGING");
-    console.log(`     Charge:        ${Math.round(dashboard.battery.stateOfCharge)}%`);
-    console.log(
-      `     Range:         ${dashboard.battery.range} ${dashboard.battery.rangeUnit}`
-    );
-    console.log(`     Charge Status: ${dashboard.battery.chargeStatus}`);
-    console.log(`     Plug Status:   ${dashboard.battery.plugStatus}`);
+  const fit = (s, w) =>
+    s.length >= w ? s.substring(0, w) : s + " ".repeat(w - s.length);
+
+  const topLine = "\u250c" + "\u2500".repeat(IW) + "\u2510";
+  const midLine = "\u251c" + "\u2500".repeat(IW) + "\u2524";
+  const botLine = "\u2514" + "\u2500".repeat(IW) + "\u2518";
+  const fullRow = (text) => "\u2502  " + fit(text, IW - 2) + "\u2502";
+  const colRow = (l, r) =>
+    "\u2502  " + fit(l, LW - 2) + "\u2502  " + fit(r, RW - 2) + "\u2502";
+
+  const fmtNum = (n) => Math.round(n).toLocaleString("en-US");
+
+  const fmtMode = (type) =>
+    type
+      .split(/[_ ]+/)
+      .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+      .join(" ");
+
+  const fmtChargeComplete = (ct) => {
+    if (!ct?.day || ct.hour == null) return "";
+    const day = ct.day.substring(0, 3);
+    const h = parseInt(ct.hour);
+    const min = String(ct.minute).padStart(2, "0");
+    const ampm = h >= 12 ? "PM" : "AM";
+    const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+    return `${day} ${h12}:${min} ${ampm}`;
+  };
+
+  // Timestamp
+  let ts = "";
+  if (dashboard.timestamp) {
+    const d = new Date(dashboard.timestamp);
+    ts = d.toISOString().replace("T", " ").replace(/\.\d+Z$/, " UTC");
   }
 
-  if (dashboard.odometer) {
-    console.log(
-      `\n  ODOMETER: ${dashboard.odometer.value} ${dashboard.odometer.unit}`
-    );
-  }
-
-  if (dashboard.tires) {
-    const pf = dashboard.tires.placardFront;
-    const pr = dashboard.tires.placardRear;
-    const placardStr = pf && pr
-      ? ` (Placard: Front ${pf.pressurePsi} PSI (${pf.pressureKpa} kPa) / Rear ${pr.pressurePsi} PSI (${pr.pressureKpa} kPa))`
+  // Battery progress bar
+  const soc = dashboard.battery?.stateOfCharge;
+  const socPct = soc != null ? Math.round(soc) : null;
+  const BAR_LEN = 15;
+  const filled =
+    socPct != null
+      ? Math.min(BAR_LEN, Math.round((socPct / 100) * BAR_LEN))
+      : 0;
+  const bar =
+    socPct != null
+      ? "\u2588".repeat(filled) +
+        "\u2591".repeat(BAR_LEN - filled) +
+        ` ${socPct}%`
       : "";
-    console.log(`\n  TIRE PRESSURES${placardStr}`);
+
+  // Range
+  const range =
+    dashboard.battery?.range != null
+      ? `Range: ${Math.round(dashboard.battery.range)} mi`
+      : "";
+
+  // Plug · Charge status
+  let plugCharge = "";
+  if (dashboard.battery) {
+    const pRaw = dashboard.battery.plugStatus;
+    const cRaw = dashboard.battery.chargeStatus;
+    const plugged = ["plugged", "CONNECT", "CONNECTED", "connected"].includes(
+      pRaw
+    );
+    const charging = [
+      "charging",
+      "CHARGING",
+      "ACTIVE",
+      "connected_charging",
+      "CONNECTION_CHARGING",
+    ].includes(cRaw);
+    plugCharge = `${plugged ? "Plugged" : "Unplugged"} \u00b7 ${charging ? "Charging" : "Not charging"}`;
+  }
+
+  // Charge mode
+  let mode = "";
+  if (dashboard.chargeSettings?.type) {
+    mode = `Mode: ${fmtMode(dashboard.chargeSettings.type)}`;
+    if (dashboard.chargeSettings.targetLevel != null) {
+      mode += ` \u2192 ${dashboard.chargeSettings.targetLevel}%`;
+      if (dashboard.projectedRangeAtTarget?.value) {
+        mode += ` (\u2248${Math.round(dashboard.projectedRangeAtTarget.value)} mi)`;
+      }
+    }
+  }
+
+  // Charging status flag (used for completion time)
+  const isCharging = dashboard.battery
+    ? ["charging", "CHARGING", "ACTIVE", "connected_charging", "CONNECTION_CHARGING"]
+        .includes(dashboard.battery.chargeStatus)
+    : false;
+
+  // Charge complete time
+  const ctStr = fmtChargeComplete(dashboard.chargeCompleteTime);
+  const complete = isCharging && ctStr ? `Complete: ${ctStr}` : "Complete: N/A";
+
+  // Odometer
+  const odo =
+    dashboard.odometer?.value != null
+      ? `Odometer: ${fmtNum(dashboard.odometer.value)} ${dashboard.odometer.unit === "kilometers" ? "km" : "mi"}`
+      : "";
+
+  // Preconditioning
+  let precond = "";
+  if (dashboard.chargeSettings?.cabinPreconditioning != null) {
+    const raw = dashboard.chargeSettings.cabinPreconditioning;
+    precond = `Precondition: ${raw === "ON" || raw === "on" ? "On" : "Off"}`;
+  }
+
+  // Precondition temperature
+  let precondTemp = "";
+  if (options.climateTemp != null) {
+    precondTemp = `Precondition Temp: ${options.climateTemp}\u00b0F`;
+  }
+
+  // Build output
+  const lines = [];
+  lines.push(topLine);
+  lines.push(fullRow("VEHICLE DASHBOARD"));
+  lines.push(fullRow(ts));
+  lines.push(midLine);
+
+  // Two-column rows: [left, right]
+  const rows = [
+    ["BATTERY", "STATUS"],
+    [bar, odo],
+    [range, precond],
+    [mode, precondTemp],
+    [plugCharge, ""],
+    [complete, ""],
+  ];
+
+  // Trim trailing rows where both columns are empty
+  while (rows.length > 1 && !rows[rows.length - 1][0] && !rows[rows.length - 1][1]) {
+    rows.pop();
+  }
+
+  for (const [l, r] of rows) {
+    lines.push(colRow(l, r));
+  }
+
+  // Tires section
+  if (dashboard.tires) {
     const t = dashboard.tires;
-    const warn = (d) => d.warning && d.warning !== "OFF" && d.warning !== "unknown" ? " (WARN)" : "";
-    const col = (d) => `${d.pressurePsi} PSI (${d.pressureKpa} kPa)${warn(d)}`;
-    console.log(`              Left                    Right`);
-    if (t.frontLeft && t.frontRight) {
-      console.log(`     Front:  ${col(t.frontLeft).padEnd(24)}${col(t.frontRight)}`);
+    const pf = t.placardFront;
+    const pr = t.placardRear;
+
+    lines.push(midLine);
+    lines.push(fullRow("TIRE PRESSURE PSI (kPa)"));
+
+    const LBL = 10;
+    const COL = 17;
+    const warn = (d) =>
+      d.warning && d.warning !== "OFF" && d.warning !== "unknown";
+    const fmtTire = (d) =>
+      d ? `${d.pressurePsi} (${d.pressureKpa})${warn(d) ? " LOW" : ""}` : "";
+
+    const hdr =
+      fit("", LBL) + fit("Left", COL) + fit("Right", COL) + "Recommended";
+    lines.push(fullRow(hdr));
+
+    if (t.frontLeft || t.frontRight) {
+      const r =
+        fit("Front", LBL) +
+        fit(fmtTire(t.frontLeft), COL) +
+        fit(fmtTire(t.frontRight), COL) +
+        fmtTire(pf);
+      lines.push(fullRow(r));
     }
-    if (t.rearLeft && t.rearRight) {
-      console.log(`     Rear:   ${col(t.rearLeft).padEnd(24)}${col(t.rearRight)}`);
+
+    if (t.rearLeft || t.rearRight) {
+      const r =
+        fit("Rear", LBL) +
+        fit(fmtTire(t.rearLeft), COL) +
+        fit(fmtTire(t.rearRight), COL) +
+        fmtTire(pr);
+      lines.push(fullRow(r));
     }
   }
 
-  if (dashboard.chargeSettings) {
-    console.log("\n  CHARGE SETTINGS");
-    console.log(`     Mode:          ${dashboard.chargeSettings.type}`);
-    console.log(`     Target Level:  ${dashboard.chargeSettings.targetLevel}%`);
-    console.log(
-      `     Cabin Precond: ${dashboard.chargeSettings.cabinPreconditioning}`
-    );
-  }
-
-  if (dashboard.projectedRangeAtTarget) {
-    console.log(
-      `     Est. Range at Target: ${dashboard.projectedRangeAtTarget.value} ${dashboard.projectedRangeAtTarget.unit}`
-    );
-  }
-
-  if (dashboard.chargeCompleteTime?.day) {
-    const ct = dashboard.chargeCompleteTime;
-    console.log(
-      `     Charge Complete: ${ct.day} ${ct.hour}:${String(ct.minute).padStart(2, "0")}`
-    );
-  }
-
-  console.log("\n" + "=".repeat(60));
+  lines.push(botLine);
+  console.log("\n" + lines.join("\n"));
 }
 
 module.exports = { parseDashboard, printDashboard };
