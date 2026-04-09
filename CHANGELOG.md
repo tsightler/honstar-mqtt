@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.6.4] - 2026-04-09
+
+### Changed
+- Rewrite async API/MQTT request handler
+
 ## [1.6.3] - 2026-04-08
 
 ### Fixed
