@@ -14,18 +14,12 @@ const TIRE_POSITIONS = {
   rearRight:  { slug: "tire_pressure_rr", placard: "placardRear" },
 };
 
-// Standard charger rates (DC power to battery after conversion losses)
-const L2_RATES_KW = [10.4, 8.6, 6.9, 5.2, 3.5]; // 48A, 40A, 32A, 24A, 16A @ 240V, 90% eff
-const L1_RATES_KW = [1.5, 1.2, 0.8];            // 16A, 12A, 8A @ 120V, 80% eff
-
 // Charge rate tracking state (persists across poll cycles)
 const chargeState = {
   active: false,
   isDcfc: null,
-  samples: [],        // Rolling window of raw kW calculations
-  snappedKw: null,    // The locked-in standard rate
-  lastSoc: null,
-  lastIsoTime: null,
+  // SOC-based rate tracking (30-min sliding window)
+  socReadings: [],       // Array of {soc, timestamp} — last 3 readings
 };
 
 // Vehicle location state for timezone detection
@@ -36,22 +30,28 @@ const vehicleState = {
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
-function snapToStandardRate(rawKw) {
-  const rates = rawKw < 3 ? L1_RATES_KW : L2_RATES_KW;
+function calculateSocBasedRate(currentSoc, currentTimestamp, capacity) {
+  // Only add readings when SOC changes to avoid diluting the cumulative average
+  const lastReading = chargeState.socReadings[chargeState.socReadings.length - 1];
+  if (!lastReading || currentSoc !== lastReading.soc) {
+    chargeState.socReadings.push({ soc: currentSoc, timestamp: currentTimestamp });
+  }
 
-  // Find closest rate
-  let closest = rates[0];
-  let minDiff = Math.abs(rawKw - closest);
+  let rawKw = null;
+  if (chargeState.socReadings.length >= 4) {
+    // After 3rd charging poll, use cumulative average from pre-charge baseline
+    const first = chargeState.socReadings[0]; // pre-charge baseline (midpoint-adjusted)
+    const current = chargeState.socReadings[chargeState.socReadings.length - 1];
+    const socDelta = current.soc - first.soc;
+    const hoursElapsed = (new Date(current.timestamp) - new Date(first.timestamp)) / 3600000;
 
-  for (const rate of rates) {
-    const diff = Math.abs(rawKw - rate);
-    if (diff < minDiff) {
-      minDiff = diff;
-      closest = rate;
+    if (socDelta > 0 && hoursElapsed > 0) {
+      rawKw = (socDelta / 100) * capacity / hoursElapsed;
+      debug(`SOC-based rate: ΔSOC=${socDelta.toFixed(1)}% Δt=${(hoursElapsed * 60).toFixed(0)}min raw=${rawKw.toFixed(1)}kW`);
     }
   }
 
-  return closest;
+  return rawKw;
 }
 
 function resolveChargeCompleteTime(ct, responseTimestamp, vehicleTimezone = null) {
@@ -221,117 +221,137 @@ function publishStates(brokerClient, vin, dashboard, vehicle) {
       if (!chargeState.active) {
         chargeState.active = true;
         chargeState.isDcfc = null;
-        chargeState.samples = [];
-        chargeState.snappedKw = null;
-        chargeState.lastSoc = null;
-        chargeState.lastIsoTime = null;
-        debug("Charge session started");
+        // Adjust baseline timestamp to midpoint between last poll and now
+        // (assume charging started halfway through the poll interval)
+        if (chargeState.socReadings.length > 0 && dashboard.timestamp) {
+          const baseline = chargeState.socReadings[0];
+          const mid = (new Date(baseline.timestamp).getTime() + new Date(dashboard.timestamp).getTime()) / 2;
+          baseline.timestamp = new Date(mid).toISOString();
+          debug(`Charge session started (baseline SOC: ${baseline.soc}%)`);
+        } else {
+          debug("Charge session started (no baseline SOC)");
+        }
       }
 
-      if (dashboard.chargeCompleteTime?.hour != null && dashboard.timestamp) {
-        const isoTime = resolveChargeCompleteTime(
-          dashboard.chargeCompleteTime,
-          dashboard.timestamp,
-          vehicleState.timezone
-        );
-        if (isoTime) {
+      const capacity = getBatteryCapacity(vehicle);
+      const currentSoc = parseFloat(dashboard.battery?.stateOfCharge);
+      const targetSoc = parseFloat(dashboard.chargeSettings?.targetLevel);
+      debug(`Charge rate calc: model=${vehicle?.ModelCode} capacity=${capacity}kWh soc=${currentSoc} target=${targetSoc}`);
+
+      // Always track SOC-based rate when we have valid data
+      let socKw = null;
+      if (capacity && !isNaN(currentSoc) && dashboard.timestamp) {
+        socKw = calculateSocBasedRate(currentSoc, dashboard.timestamp, capacity);
+      }
+
+      if (capacity && !isNaN(currentSoc) && !isNaN(targetSoc) && targetSoc > currentSoc) {
+        // Resolve API completion time
+        let apiIsoTime = null;
+        let apiHoursRemaining = null;
+        if (dashboard.chargeCompleteTime?.hour != null && dashboard.timestamp) {
+          apiIsoTime = resolveChargeCompleteTime(
+            dashboard.chargeCompleteTime,
+            dashboard.timestamp,
+            vehicleState.timezone
+          );
+          if (apiIsoTime) {
+            apiHoursRemaining = (new Date(apiIsoTime) - new Date(dashboard.timestamp)) / 3600000;
+          }
+        }
+
+        // Detect charge type on first valid calculation
+        if (chargeState.isDcfc === null && apiHoursRemaining !== null) {
+          const minutesRemaining = apiHoursRemaining * 60;
+          chargeState.isDcfc = (targetSoc - currentSoc) > 5 && minutesRemaining < 10;
+          debug(`Charge type detected: ${chargeState.isDcfc ? "DCFC" : "L1/L2"}`);
+        }
+
+        // Determine which rate source to use
+        const apiStale = apiHoursRemaining === null || apiHoursRemaining <= 0 || apiHoursRemaining > 120;
+        let rawKw = null;
+        let usingSocBased = false;
+        let publishedIsoTime = apiIsoTime;
+
+        if (apiStale) {
+          // API time is missing, in the past, or > 5 days away — use SOC-based
+          if (socKw && socKw > 0) {
+            rawKw = socKw;
+            usingSocBased = true;
+            // Calculate our own completion time
+            const remainingKwh = ((targetSoc - currentSoc) / 100) * capacity;
+            const hoursToComplete = remainingKwh / socKw;
+            publishedIsoTime = new Date(new Date(dashboard.timestamp).getTime() + hoursToComplete * 3600000).toISOString();
+            debug(`Stale API completion time (${apiHoursRemaining !== null ? apiHoursRemaining.toFixed(1) + 'h' : 'null'}), using SOC-based rate: ${socKw.toFixed(1)}kW`);
+          }
+        } else {
+          // API time seems reasonable — calculate API-based kW
+          const apiKw = ((targetSoc - currentSoc) / 100) * capacity / apiHoursRemaining;
+
+          if (socKw && socKw > 0) {
+            // Compare API and SOC-based completion times
+            const remainingKwh = ((targetSoc - currentSoc) / 100) * capacity;
+            const socHoursRemaining = remainingKwh / socKw;
+            const ratio = apiHoursRemaining / socHoursRemaining;
+
+            if (ratio >= 0.75 && ratio <= 1.25) {
+              // Within 25% — average API and SOC-based rates
+              rawKw = (apiKw + socKw) / 2;
+              debug(`API/SOC averaged (ratio=${ratio.toFixed(2)}, api=${apiKw.toFixed(1)}kW, soc=${socKw.toFixed(1)}kW, avg=${rawKw.toFixed(1)}kW)`);
+            } else {
+              // Diverged — use SOC-based
+              rawKw = socKw;
+              usingSocBased = true;
+              const hoursToComplete = remainingKwh / socKw;
+              publishedIsoTime = new Date(new Date(dashboard.timestamp).getTime() + hoursToComplete * 3600000).toISOString();
+              debug(`API completion differs from SOC-based estimate (ratio=${ratio.toFixed(2)}, api=${apiKw.toFixed(1)}kW, soc=${socKw.toFixed(1)}kW), using SOC-based rate`);
+            }
+          } else {
+            // No SOC-based rate yet — use API
+            rawKw = apiKw;
+          }
+        }
+
+        // Publish completion time
+        if (publishedIsoTime) {
           brokerClient.publish(
             `honstar-mqtt/${vin}/ev_charge_complete_time/state`,
-            isoTime,
+            publishedIsoTime,
             opts
           );
+        }
 
-          const capacity = getBatteryCapacity(vehicle);
-          const currentSoc = parseFloat(dashboard.battery?.stateOfCharge);
-          const targetSoc = parseFloat(dashboard.chargeSettings?.targetLevel);
-          debug(`Charge rate calc: model=${vehicle?.ModelCode} capacity=${capacity}kWh soc=${currentSoc} target=${targetSoc}`);
-
-          if (capacity && !isNaN(currentSoc) && !isNaN(targetSoc) && targetSoc > currentSoc) {
-            const hoursRemaining = (new Date(isoTime) - new Date(dashboard.timestamp)) / 3600000;
-
-            // Detect charge type on first valid calculation
-            if (chargeState.isDcfc === null) {
-              const minutesRemaining = hoursRemaining * 60;
-              chargeState.isDcfc = (targetSoc - currentSoc) > 5 && minutesRemaining < 10;
-              debug(`Charge type detected: ${chargeState.isDcfc ? "DCFC" : "L1/L2"}`);
-            }
-
-            let rawKw;
-            if (hoursRemaining > 0) {
-              // Calculate raw kW from ETA
-              rawKw = ((targetSoc - currentSoc) / 100) * capacity / hoursRemaining;
-            }
-
-            if (rawKw && rawKw > 0) {
-              // Detect stale data: SOC and completion time unchanged from last cycle
-              const staleData = chargeState.lastSoc !== null
-                && currentSoc === chargeState.lastSoc
-                && isoTime === chargeState.lastIsoTime;
-              chargeState.lastSoc = currentSoc;
-              chargeState.lastIsoTime = isoTime;
-
-              let kw;
-              if (chargeState.isDcfc) {
-                // DCFC: just round to nearest integer
-                kw = Math.round(rawKw);
-              } else {
-                // L1/L2: use rolling average and snap to standard rates
-                if (!staleData) {
-                  // Add new sample to rolling window
-                  chargeState.samples.push(rawKw);
-                  // Keep last 6 samples (90 minutes of data at 15 min polls)
-                  if (chargeState.samples.length > 6) {
-                    chargeState.samples.shift();
-                  }
-                }
-
-                if (chargeState.samples.length > 0) {
-                  // Calculate average of samples
-                  const avgRaw = chargeState.samples.reduce((a, b) => a + b, 0) / chargeState.samples.length;
-
-                  // Snap to standard rate
-                  const snapped = snapToStandardRate(avgRaw);
-
-                  // Lock in the rate once we have enough samples (3+)
-                  if (chargeState.snappedKw === null || chargeState.samples.length < 3) {
-                    chargeState.snappedKw = snapped;
-                  }
-                  // Allow adjustments if average has shifted significantly
-                  else if (Math.abs(snapped - chargeState.snappedKw) > 1.5) {
-                    chargeState.snappedKw = snapped;
-                    debug(`Charge rate adjusted to ${snapped}kW based on new average`);
-                  }
-
-                  kw = chargeState.snappedKw;
-                }
-              }
-
-              if (kw !== undefined) {
-                const avgStr = chargeState.samples.length > 0
-                  ? (chargeState.samples.reduce((a,b)=>a+b,0)/chargeState.samples.length).toFixed(1)
-                  : 'n/a';
-                debug(`Charge rate: raw=${rawKw.toFixed(1)}kW samples=${chargeState.samples.length} avg=${avgStr}kW published=${kw}kW`);
-                brokerClient.publish(
-                  `honstar-mqtt/${vin}/ev_charge_rate/state`,
-                  String(kw),
-                  opts
-                );
-              }
-            }
+        if (rawKw && rawKw > 0) {
+          let kw;
+          if (chargeState.isDcfc) {
+            kw = Math.round(rawKw);
+          } else {
+            // Add 5% to account for battery overhead, cap at 11kW for L1/L2
+            kw = Math.min(rawKw * 1.05, 11);
+            kw = Math.round(kw * 10) / 10;
           }
+          const src = usingSocBased ? 'soc' : 'api';
+          debug(`Charge rate: src=${src} raw=${rawKw.toFixed(1)}kW published=${kw}kW`);
+          brokerClient.publish(
+            `honstar-mqtt/${vin}/ev_charge_rate/state`,
+            String(kw),
+            opts
+          );
         }
       }
     } else {
-      // Not charging — reset session state
+      // Not charging — reset session state but track SOC baseline
       if (chargeState.active) {
         debug("Charge session ended");
       }
       chargeState.active = false;
       chargeState.isDcfc = null;
-      chargeState.samples = [];
-      chargeState.snappedKw = null;
-      chargeState.lastSoc = null;
-      chargeState.lastIsoTime = null;
+      // Record current SOC as baseline for next charge session
+      const soc = parseFloat(dashboard.battery?.stateOfCharge);
+      if (!isNaN(soc) && dashboard.timestamp) {
+        chargeState.socReadings = [{ soc, timestamp: dashboard.timestamp }];
+      } else {
+        chargeState.socReadings = [];
+      }
       brokerClient.publish(`honstar-mqtt/${vin}/ev_charge_complete_time/state`, "", opts);
       brokerClient.publish(`honstar-mqtt/${vin}/ev_charge_rate/state`, "0", opts);
     }
