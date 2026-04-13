@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.0] - 2026-04-13
+
+### Changed
+- Use combined average charge rate estimator
+- Replace common headers with single function
+- Implement new dashboard
+
 ## [1.6.4] - 2026-04-09
 
 ### Changed
