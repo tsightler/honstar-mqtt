@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.7.1] - 2026-04-14
+
+### Changed
+- Poll on fixed interval at random offset
+
 ## [1.7.0] - 2026-04-13
 
 ### Changed
