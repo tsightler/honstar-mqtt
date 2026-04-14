@@ -18,8 +18,8 @@ const TIRE_POSITIONS = {
 const chargeState = {
   active: false,
   isDcfc: null,
-  // SOC-based rate tracking (30-min sliding window)
-  socReadings: [],       // Array of {soc, timestamp} — last 3 readings
+  // SOC-based rate tracking (cumulative average from pre-charge baseline)
+  socReadings: [],       // Array of {soc, timestamp}
 };
 
 // Vehicle location state for timezone detection
@@ -40,7 +40,7 @@ function calculateSocBasedRate(currentSoc, currentTimestamp, capacity) {
   let rawKw = null;
   if (chargeState.socReadings.length >= 4) {
     // After 3rd charging poll, use cumulative average from pre-charge baseline
-    const first = chargeState.socReadings[0]; // pre-charge baseline (midpoint-adjusted)
+    const first = chargeState.socReadings[0]; // pre-charge baseline
     const current = chargeState.socReadings[chargeState.socReadings.length - 1];
     const socDelta = current.soc - first.soc;
     const hoursElapsed = (new Date(current.timestamp) - new Date(first.timestamp)) / 3600000;
@@ -221,13 +221,8 @@ function publishStates(brokerClient, vin, dashboard, vehicle) {
       if (!chargeState.active) {
         chargeState.active = true;
         chargeState.isDcfc = null;
-        // Adjust baseline timestamp to midpoint between last poll and now
-        // (assume charging started halfway through the poll interval)
-        if (chargeState.socReadings.length > 0 && dashboard.timestamp) {
-          const baseline = chargeState.socReadings[0];
-          const mid = (new Date(baseline.timestamp).getTime() + new Date(dashboard.timestamp).getTime()) / 2;
-          baseline.timestamp = new Date(mid).toISOString();
-          debug(`Charge session started (baseline SOC: ${baseline.soc}%)`);
+        if (chargeState.socReadings.length > 0) {
+          debug(`Charge session started (baseline SOC: ${chargeState.socReadings[0].soc}%)`);
         } else {
           debug("Charge session started (no baseline SOC)");
         }
@@ -267,17 +262,17 @@ function publishStates(brokerClient, vin, dashboard, vehicle) {
         }
 
         // Determine which rate source to use
-        const apiStale = apiHoursRemaining === null || apiHoursRemaining <= 0 || apiHoursRemaining > 120;
+        const apiStale = apiHoursRemaining === null || apiHoursRemaining <= 0
+          || apiHoursRemaining > 120 || apiHoursRemaining < 0.25;
         let rawKw = null;
         let usingSocBased = false;
         let publishedIsoTime = apiIsoTime;
 
         if (apiStale) {
-          // API time is missing, in the past, or > 5 days away — use SOC-based
+          // API time is missing, expired, too far out, or too close to expiry
           if (socKw && socKw > 0) {
             rawKw = socKw;
             usingSocBased = true;
-            // Calculate our own completion time
             const remainingKwh = ((targetSoc - currentSoc) / 100) * capacity;
             const hoursToComplete = remainingKwh / socKw;
             publishedIsoTime = new Date(new Date(dashboard.timestamp).getTime() + hoursToComplete * 3600000).toISOString();
@@ -288,23 +283,9 @@ function publishStates(brokerClient, vin, dashboard, vehicle) {
           const apiKw = ((targetSoc - currentSoc) / 100) * capacity / apiHoursRemaining;
 
           if (socKw && socKw > 0) {
-            // Compare API and SOC-based completion times
-            const remainingKwh = ((targetSoc - currentSoc) / 100) * capacity;
-            const socHoursRemaining = remainingKwh / socKw;
-            const ratio = apiHoursRemaining / socHoursRemaining;
-
-            if (ratio >= 0.75 && ratio <= 1.25) {
-              // Within 25% — average API and SOC-based rates
-              rawKw = (apiKw + socKw) / 2;
-              debug(`API/SOC averaged (ratio=${ratio.toFixed(2)}, api=${apiKw.toFixed(1)}kW, soc=${socKw.toFixed(1)}kW, avg=${rawKw.toFixed(1)}kW)`);
-            } else {
-              // Diverged — use SOC-based
-              rawKw = socKw;
-              usingSocBased = true;
-              const hoursToComplete = remainingKwh / socKw;
-              publishedIsoTime = new Date(new Date(dashboard.timestamp).getTime() + hoursToComplete * 3600000).toISOString();
-              debug(`API completion differs from SOC-based estimate (ratio=${ratio.toFixed(2)}, api=${apiKw.toFixed(1)}kW, soc=${socKw.toFixed(1)}kW), using SOC-based rate`);
-            }
+            // Always average API and SOC-based rates
+            rawKw = (apiKw + socKw) / 2;
+            debug(`API/SOC averaged (api=${apiKw.toFixed(1)}kW, soc=${socKw.toFixed(1)}kW, avg=${rawKw.toFixed(1)}kW)`);
           } else {
             // No SOC-based rate yet — use API
             rawKw = apiKw;
@@ -325,8 +306,8 @@ function publishStates(brokerClient, vin, dashboard, vehicle) {
           if (chargeState.isDcfc) {
             kw = Math.round(rawKw);
           } else {
-            // Add 5% to account for battery overhead, cap at 11kW for L1/L2
-            kw = Math.min(rawKw * 1.05, 11);
+            // Add 5% to account for battery overhead, cap at 10.5kW for L1/L2
+            kw = Math.min(rawKw * 1.05, 10.5);
             kw = Math.round(kw * 10) / 10;
           }
           const src = usingSocBased ? 'soc' : 'api';

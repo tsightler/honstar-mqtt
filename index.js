@@ -213,7 +213,7 @@ Docker:
     shuttingDown = true;
     log("Shutting down...");
 
-    if (pollTimer) clearInterval(pollTimer);
+    if (pollTimer) { clearTimeout(pollTimer); clearInterval(pollTimer); }
     if (climateOffTimer) clearTimeout(climateOffTimer);
     if (lockStateTimer) clearTimeout(lockStateTimer);
 
@@ -798,8 +798,7 @@ Docker:
     }
 
     // Schedule recurring polls
-    log(`Next poll in ${pollInterval}s`);
-    pollTimer = setInterval(async () => {
+    const pollCycle = async () => {
       if (activeOps.has('poll')) {
         log("Skipping scheduled poll (poll in progress)");
         return;
@@ -814,7 +813,24 @@ Docker:
       if (!shuttingDown) {
         log(`Next poll in ${pollInterval}s`);
       }
-    }, pollInterval * 1000);
+    };
+
+    if (pollInterval === 900) {
+      // Align to 15-minute wall-clock boundaries with random offset (5-10 min)
+      const intervalMs = 900000;
+      const offsetMs = 300000 + Math.round(Math.random() * 300000); // 5-10 min
+      const now = Date.now();
+      const nextAligned = Math.ceil((now - offsetMs) / intervalMs) * intervalMs + offsetMs;
+      const delayMs = nextAligned - now;
+      log(`Next poll in ${Math.round(delayMs / 1000)}s (aligned to 15-min boundary, offset ${Math.round(offsetMs / 1000)}s)`);
+      pollTimer = setTimeout(() => {
+        pollCycle();
+        pollTimer = setInterval(pollCycle, intervalMs);
+      }, delayMs);
+    } else {
+      log(`Next poll in ${pollInterval}s`);
+      pollTimer = setInterval(pollCycle, pollInterval * 1000);
+    }
   } catch (err) {
     log(`Fatal error: ${err.message}`);
     await shutdown();
