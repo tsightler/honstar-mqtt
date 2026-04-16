@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.7.2] - 2026-04-16
+
+### Added
+- Add range based charging rate estimation
+
 ## [1.7.1] - 2026-04-14
 
 ### Changed
