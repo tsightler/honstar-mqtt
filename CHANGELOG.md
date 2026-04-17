@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.7.3] - 2026-04-17
+
+### Changed
+- Use cumulative average for all charge rate inputs
+
 ## [1.7.2] - 2026-04-16
 
 ### Added
