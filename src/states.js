@@ -22,6 +22,8 @@ const chargeState = {
   lastPoll: null,              // {soc, range, timestamp} from previous charging poll
   socIntervalRates: [],        // Per-interval SOC-based rates (kW)
   rangeIntervalRates: [],      // Per-interval range-based rates (kW)
+  apiRates: [],                // Per-poll API rate estimates (kW)
+  combinedRates: [],           // Per-poll combined rate estimates (kW)
 };
 
 // Vehicle location state for timezone detection
@@ -298,9 +300,11 @@ function publishStates(brokerClient, vin, dashboard, vehicle) {
 
         if (!apiStale) {
           const apiKw = ((targetSoc - currentSoc) / 100) * capacity / apiHoursRemaining;
-          rates.push(apiKw);
-          rateSources.push(`api=${apiKw.toFixed(1)}`);
-          rateCounts.push(1);
+          chargeState.apiRates.push(apiKw);
+          const apiAvg = chargeState.apiRates.reduce((a, b) => a + b, 0) / chargeState.apiRates.length;
+          rates.push(apiAvg);
+          rateSources.push(`api=${apiAvg.toFixed(1)}(${chargeState.apiRates.length})`);
+          rateCounts.push(chargeState.apiRates.length);
         }
         if (socAvg !== null) {
           rates.push(socAvg);
@@ -341,8 +345,10 @@ function publishStates(brokerClient, vin, dashboard, vehicle) {
         let publishedIsoTime = apiIsoTime;
 
         if (rates.length > 0) {
-          rawKw = rates.reduce((a, b) => a + b, 0) / rates.length;
-          debug(`Rate sources: ${rateSources.join(', ')} → avg=${rawKw.toFixed(1)}kW`);
+          const pollRate = rates.reduce((a, b) => a + b, 0) / rates.length;
+          chargeState.combinedRates.push(pollRate);
+          rawKw = chargeState.combinedRates.reduce((a, b) => a + b, 0) / chargeState.combinedRates.length;
+          debug(`Rate sources: ${rateSources.join(', ')} → poll=${pollRate.toFixed(1)}kW cumul=${rawKw.toFixed(1)}kW`);
         }
 
         // Calculate completion time from averaged rate if API is stale
@@ -388,6 +394,8 @@ function publishStates(brokerClient, vin, dashboard, vehicle) {
       chargeState.lastPoll = null;
       chargeState.socIntervalRates = [];
       chargeState.rangeIntervalRates = [];
+      chargeState.apiRates = [];
+      chargeState.combinedRates = [];
       // Record current SOC as baseline for next charge session
       const soc = parseFloat(dashboard.battery?.stateOfCharge);
       chargeState.preChargeSoc = !isNaN(soc) ? soc : null;
