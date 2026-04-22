@@ -46,6 +46,7 @@ async function pollOnce(accessToken, vin) {
     dashResolve = resolve;
     dashReject = reject;
   });
+  dashboardPromise.catch(() => {}); // prevent unhandled rejection if timeout fires during requestDashboard()
 
   let dashTimeout = setTimeout(() => {
     cancelSignal.cancelled = true;
