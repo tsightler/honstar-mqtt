@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.7.4] - 2026-04-23
+
+### Fixed
+- Fix crash on API failures
+
 ## [1.7.3] - 2026-04-17
 
 ### Changed
