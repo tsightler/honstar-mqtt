@@ -1,5 +1,10 @@
 # Changelog
 
+## [2.0.0] - 2026-05-06
+
+### Added
+- Add stop charging
+
 ## [1.7.4] - 2026-04-23
 
 ### Fixed

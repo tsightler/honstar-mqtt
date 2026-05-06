@@ -1,5 +1,5 @@
 name: HOnStar MQTT
-version: "1.7.4"
+version: "2.0.0"
 slug: honstar-mqtt
 description: >-
   MQTT Bridge for Honda/Acura EVs based on the GM BEV3 platform.
