@@ -30,6 +30,7 @@ const {
   stopClimate,
   lockDoors,
   unlockDoors,
+  stopCharging,
   locateVehicle,
 } = require("./src/commands");
 
@@ -403,6 +404,7 @@ Docker:
     const climateModeTopic = `honstar-mqtt/${vin}/ev_climate/set`;
     const climateTempTopic = `honstar-mqtt/${vin}/ev_climate_temperature/set`;
     const lockTopic = `honstar-mqtt/${vin}/door_lock/set`;
+    const stopChargingTopic = `honstar-mqtt/${vin}/stop_charging/set`;
     const locateTopic = `honstar-mqtt/${vin}/locate/set`;
 
     const commandTopics = [
@@ -410,6 +412,7 @@ Docker:
       climateModeTopic,
       climateTempTopic,
       lockTopic,
+      stopChargingTopic,
       locateTopic,
     ];
     brokerClient.subscribe(commandTopics, { qos: 1 }, (err) => {
@@ -485,6 +488,23 @@ Docker:
         }
 
         executeLockCmd(cmd);
+        return;
+      }
+
+      // ── Stop charging ──
+      if (topic === stopChargingTopic) {
+        const cmd = message.toString().toUpperCase();
+        if (cmd !== "PRESS") {
+          log(`Invalid stop charging command: ${message.toString()}`);
+          return;
+        }
+
+        if (activeOps.has('stopCharging')) {
+          log("Stop charging already in progress");
+          return;
+        }
+
+        executeStopChargingCmd();
         return;
       }
 
@@ -720,6 +740,19 @@ Docker:
         const next = pendingLockCmd;
         log(`Processing queued door ${next.toLowerCase()}`);
         executeLockCmd(next);
+      }
+    }
+
+    async function executeStopChargingCmd() {
+      activeOps.add('stopCharging');
+
+      try {
+        await stopCharging(accessToken, vin);
+      } catch (err) {
+        log(`Stop charging command failed: ${err.message}`);
+        await handleReauth(err.message);
+      } finally {
+        activeOps.delete('stopCharging');
       }
     }
 

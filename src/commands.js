@@ -6,6 +6,7 @@ const {
   requestStopClimate,
   requestLockDoors,
   requestUnlockDoors,
+  requestStopCharging,
   requestLocateVehicle,
 } = require("./api");
 
@@ -294,11 +295,32 @@ async function locateVehicle(
   return result;
 }
 
+async function stopCharging(
+  accessToken,
+  vin,
+  { maxAttempts = 3, verifyTimeout = 60000 } = {}
+) {
+  log("Stopping charging...");
+
+  await executeCommand({
+    name: "stop charging",
+    httpRequest: () => requestStopCharging(accessToken, vin),
+    topicFilter: "CHARGEMANAGEMENT_STOPFASTCHARGE_ASYNC",
+    parseResponse: parseStatusResponse("Stop charging"),
+    timeout: verifyTimeout,
+    maxAttempts,
+  });
+
+  log("Charging stopped");
+  return true;
+}
+
 module.exports = {
   setTargetChargeLevel,
   startClimate,
   stopClimate,
   lockDoors,
   unlockDoors,
+  stopCharging,
   locateVehicle,
 };

@@ -385,6 +385,36 @@ async function requestUnlockDoors(accessToken, vin, pin) {
   throw new Error(`Door unlock failed (HTTP ${resp.status}): ${errMsg}`);
 }
 
+async function requestStopCharging(accessToken, vin) {
+  log("Requesting stop charging...");
+
+  const resp = await fetch(`${CONFIG.wscHost}/REST/NGT/ManageCharge/1.0`, {
+    method: "POST",
+    headers: hondaHeaders(accessToken),
+    body: JSON.stringify({
+      command: "stopFastCharge",
+      device: vin,
+    }),
+  });
+
+  const data = await resp.json();
+
+  if (resp.status === 400) {
+    const errMsg = data.responseBody?.errorMessage || "Bad request";
+    throw new Error(`Stop charging failed: ${errMsg}`);
+  }
+
+  if (resp.ok && (data.status === "IN_PROGRESS" || data.status === "success")) {
+    const reqId = data.responseBody?.cigServiceRequestId;
+    debug(`Stop charging request ID: ${reqId}`);
+    return reqId;
+  }
+
+  const errMsg =
+    data.responseBody?.errorMessage || data.status || resp.statusText;
+  throw new Error(`Stop charging failed (HTTP ${resp.status}): ${errMsg}`);
+}
+
 async function requestLocateVehicle(accessToken, vin, pin) {
   log("Requesting vehicle location...");
 
@@ -426,5 +456,6 @@ module.exports = {
   requestStopClimate,
   requestLockDoors,
   requestUnlockDoors,
+  requestStopCharging,
   requestLocateVehicle,
 };

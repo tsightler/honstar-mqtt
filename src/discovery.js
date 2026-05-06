@@ -124,6 +124,14 @@ function publishDiscovery(brokerClient, vin, vehicle) {
     payload_unlock: "UNLOCK",
   });
 
+  // Stop charging button
+  pub("button", "stop_charging", {
+    name: "Stop Charging",
+    icon: "mdi:ev-plug-type1",
+    command_topic: `honstar-mqtt/${vin}/stop_charging/set`,
+    payload_press: "PRESS",
+  });
+
   // Locate vehicle button
   pub("button", "locate", {
     name: "Locate Vehicle",
